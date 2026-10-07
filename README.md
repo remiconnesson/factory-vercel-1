@@ -12,6 +12,10 @@ AI Gateway, Vercel Connect, the AI SDK fx harness, libfx and GitHub Tools.
 
 A human merges.
 
+Only `FACTORY_ALLOWED_USERS` can start the loop: issues opened by anyone else are ignored, `ready-to-implement`
+must come from an allowed user, the factory's bot may only continue a chain an allowed user started, and PRs from
+forks never trigger a station. To take an outsider's issue, an allowed user applies `ready-to-spec` to it.
+
 ## Design rules
 
 - Agents never write to GitHub. Deterministic workflow steps do every write (commits, PRs, labels, comments).
@@ -44,6 +48,7 @@ step in `steps.ts` loads its host module with a dynamic `import()`, which the wo
 | `GITHUB_WEBHOOK_SECRET` | Random string, also set on the GitHub webhook                                    |
 | `FACTORY_OWNER`         | Target repository owner                                                          |
 | `FACTORY_REPO`          | Target repository name                                                           |
+| `FACTORY_ALLOWED_USERS` | Comma-separated GitHub logins allowed to trigger stations. Empty: every event is ignored |
 | `FACTORY_MODEL`         | Optional AI Gateway model ID (default `anthropic/claude-opus-5.5`)               |
 | `FACTORY_CONNECTOR`     | Optional Vercel Connect connector UID (default `github/factory`)                 |
 | `AI_GATEWAY_API_KEY`    | Optional. Without it the project's Vercel OIDC token authenticates to AI Gateway |
