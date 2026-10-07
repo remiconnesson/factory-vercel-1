@@ -1,0 +1,31 @@
+import { config } from './config';
+import { gh } from './github';
+import type { Change } from './sandbox';
+
+export async function commitChanges(a: { branch: string; baseSha: string; message: string; changes: Change[]; allowedPaths?: string[] }) {
+  for (const c of a.changes) {
+    if (config.protectedPaths.some((r) => r.test(c.path))) throw new Error(`Refusing protected path: ${c.path}`);
+    if (a.allowedPaths && !a.allowedPaths.some((p) => c.path.startsWith(p))) throw new Error(`Outside allowed paths: ${c.path}`);
+  }
+  if (a.changes.length === 0) return null;
+
+  const o = await gh();
+  const { owner, repo } = config;
+  const base = await o.rest.git.getCommit({ owner, repo, commit_sha: a.baseSha });
+
+  const tree = await Promise.all(a.changes.map(async (c) => ({
+    path: c.path,
+    mode: c.mode as '100644' | '100755',
+    type: 'blob' as const,
+    sha: c.deleted ? null : (await o.rest.git.createBlob({ owner, repo, content: c.contentBase64!, encoding: 'base64' })).data.sha,
+  })));
+
+  const newTree = await o.rest.git.createTree({ owner, repo, base_tree: base.data.tree.sha, tree });
+  const commit = await o.rest.git.createCommit({ owner, repo, message: a.message, tree: newTree.data.sha, parents: [a.baseSha] });
+
+  const ref = `heads/${a.branch}`;
+  const exists = await o.rest.git.getRef({ owner, repo, ref }).then(() => true, (e: { status?: number }) => (e.status === 404 ? false : Promise.reject(e)));
+  if (exists) await o.rest.git.updateRef({ owner, repo, ref, sha: commit.data.sha, force: false }); // fails if a human pushed meanwhile
+  else await o.rest.git.createRef({ owner, repo, ref: `refs/${ref}`, sha: commit.data.sha });
+  return commit.data.sha;
+}

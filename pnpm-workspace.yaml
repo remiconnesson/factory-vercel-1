@@ -1,0 +1,9 @@
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+  '@swc/core': true
+  cbor-extract: true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@ai-sdk/harness@1.0.141'
+  - ai@7.0.130
