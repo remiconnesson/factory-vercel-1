@@ -30,6 +30,7 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
 
 ```
 app/api/github/webhook/route.ts   # HMAC check, label state machine → start()
+app/api/health/route.ts           # unauthenticated GET health check: { ok, repo }
 factory/stations/*.md             # one prompt template per station (bundled at build time)
 lib/                              # host-only code: GitHub, Connect tokens, libfx, harness, sandbox, commit
 workflows/steps.ts                # the step boundary: lazy-loads lib/ inside "use step" bodies
