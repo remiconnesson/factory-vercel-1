@@ -35,8 +35,24 @@ export const native = (sandboxId: string) => Sandbox.get({ name: sandboxId });
 
 const repoDir = (sbx: Sandbox) => `${sbx.cwd}/repo`;
 
+// The harness runs the agent with its own HOME (for install-command harnesses like fx). Every orchestrator command
+// runs under that same HOME, so whatever setup installs or caches (package-manager versions, npm caches, browsers)
+// is exactly what the agent sees, and the orchestrator's verify checks the agent's environment, not a different one.
+const agentHomes = new Map<string, Promise<string | undefined>>();
+function agentHome(sbx: Sandbox) {
+  let home = agentHomes.get(sbx.name);
+  if (!home) {
+    home = sbx
+      .runCommand({ cmd: 'bash', args: ['-c', 'ls -d "$HOME"/.ai-sdk-harness/.harness-bootstrap/*/implementation/home 2>/dev/null | head -1'] })
+      .then(async (r) => (await r.stdout()).trim() || undefined);
+    agentHomes.set(sbx.name, home);
+  }
+  return home;
+}
+
 async function run(sbx: Sandbox, cmd: string, args: string[], cwd = repoDir(sbx)) {
-  const r = await sbx.runCommand({ cmd, args, cwd, env: { GIT_TERMINAL_PROMPT: '0', CI: '1' } });
+  const home = await agentHome(sbx);
+  const r = await sbx.runCommand({ cmd, args, cwd, env: { GIT_TERMINAL_PROMPT: '0', CI: '1', ...(home ? { HOME: home } : {}) } });
   const [stdout, stderr] = await Promise.all([r.stdout(), r.stderr()]);
   return { exitCode: r.exitCode, stdout, stderr };
 }
