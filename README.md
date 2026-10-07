@@ -25,6 +25,9 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
   injected by the sandbox firewall; the GitHub rule is removed as soon as the clone and install finish.
 - The sandbox never gets write authority: the host commits through the Git Data API, enforcing allowed and
   protected paths (`.github/`, lockfiles).
+- The coding agent (fx) has the [Vercel plugin](https://vercel.com/docs/agent-resources/vercel-plugin)'s skills and
+  ecosystem graph, baked into the sandbox template at a pinned commit (`VERCEL_PLUGIN_SHA` in `lib/coding-agent.ts`).
+  The plugin has no fx integration, so its hooks, slash commands and sub-agents are not included.
 
 ## Layout
 
