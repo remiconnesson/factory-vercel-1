@@ -44,3 +44,4 @@ next-env.d.ts
 /lib/stations.generated.json
 .factory/
 /.swc
+/lib/skills.generated.json

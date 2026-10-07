@@ -4,6 +4,7 @@ import { createCodingAgent } from './coding-agent';
 import { config } from './config';
 import { mintReadToken } from './github';
 import { gatewayKey } from './ai-gateway';
+import { vercelContext, vercelEnabled, vercelEnvFile, vercelRules } from './vercel';
 
 const SANDBOX_TIMEOUT_MS = 2 * 60 * 60_000; // the default is 5 minutes
 const SANDBOX_VCPUS = 4;
@@ -98,16 +99,32 @@ export async function prepareRepo(sandboxId: string, branch: string) {
 
 type Slice = { done: boolean; continuation?: unknown; text?: string };
 
+/**
+ * The agent's policy: lockdown plus read-only Vercel access to the project (when configured). Refreshed every slice,
+ * so the preview host follows new deployments. Writes the identifiers the vercel-debug skill reads.
+ */
+async function agentPolicy(sbx: Sandbox, key: string) {
+  const lockdown = lockdownPolicy(key);
+  if (!vercelEnabled()) return lockdown;
+  const ctx = await vercelContext((await sh(sbx, 'git branch --show-current')).stdout.trim());
+  await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/vercel.env`, content: Buffer.from(vercelEnvFile(ctx)) }]);
+  return { allow: { ...lockdown.allow, ...vercelRules(ctx) } };
+}
+
 export async function runAgentSlice(args: { sandboxId: string; sessionId: string; prompt?: string; continuation?: unknown }): Promise<Slice> {
   const agent = await createCodingAgent();
+  const sbx = await native(args.sandboxId);
+  const key = await gatewayKey();
+  // The harness refuses to start on a policy holding credential rules it did not add: start on plain lockdown.
+  await sbx.update({ networkPolicy: lockdownPolicy(key) });
   const sandboxSession = await resumeVercelNetworkSandboxSession({ sandboxId: args.sandboxId });
   const session = await agent.createSession(
     args.continuation
       ? { sessionId: args.sessionId, continueFrom: args.continuation as never, sandboxSession }
       : { sessionId: args.sessionId, sandboxSession },
   );
-  // Re-assert lockdown after the harness has configured the sandbox.
-  await (await native(args.sandboxId)).update({ networkPolicy: lockdownPolicy(await gatewayKey()) });
+  // Then replace whatever the harness configured with the agent's policy.
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, key) });
 
   const result = args.continuation
     ? await agent.continueGenerate({ session })

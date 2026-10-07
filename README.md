@@ -25,15 +25,17 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
   injected by the sandbox firewall; the GitHub rule is removed as soon as the clone and install finish.
 - The sandbox never gets write authority: the host commits through the Git Data API, enforcing allowed and
   protected paths (`.github/`, lockfiles).
-- The coding agent (fx) has the [Vercel plugin](https://vercel.com/docs/agent-resources/vercel-plugin)'s skills and
-  ecosystem graph, baked into the sandbox template at a pinned commit (`VERCEL_PLUGIN_SHA` in `lib/coding-agent.ts`).
-  The plugin has no fx integration, so its hooks, slash commands and sub-agents are not included.
+- Sandbox agents get read-only Vercel access to the project through the `vercel-debug` skill (`factory/skills/`):
+  deployments, build logs, runtime logs and requests to the branch preview and production. The project-scoped
+  `FACTORY_VERCEL_TOKEN` and the automation bypass stay on the host; the firewall adds them only to the GET
+  endpoints in `lib/vercel.ts` and to the project's own hosts, and answers 403 to everything else.
 
 ## Layout
 
 ```
 app/api/github/webhook/route.ts   # HMAC check, label state machine → start()
 factory/stations/*.md             # one prompt template per station (bundled at build time)
+factory/skills/*/SKILL.md         # skills for the sandbox agents (bundled at build time)
 lib/                              # host-only code: GitHub, Connect tokens, libfx, harness, sandbox, commit
 workflows/steps.ts                # the step boundary: lazy-loads lib/ inside "use step" bodies
 workflows/{triage,coding-station,review}.ts
@@ -51,6 +53,8 @@ step in `steps.ts` loads its host module with a dynamic `import()`, which the wo
 | `GITHUB_WEBHOOK_SECRET` | Random string, also set on the GitHub webhook                                    |
 | `FACTORY_OWNER`         | Target repository owner                                                          |
 | `FACTORY_REPO`          | Target repository name                                                           |
+| `FACTORY_VERCEL_TOKEN`  | Optional. Project-scoped Vercel token for the vercel-debug skill (sensitive)       |
+| `FACTORY_VERCEL_TEAM_ID`, `FACTORY_VERCEL_PROJECT_ID` | The target's Vercel team and project, for the vercel-debug skill |
 | `FACTORY_ALLOWED_USERS` | Comma-separated GitHub logins allowed to trigger stations. Empty: every event is ignored |
 | `FACTORY_MODEL`         | Optional AI Gateway model ID (default `anthropic/claude-opus-5.5`)               |
 | `FACTORY_CONNECTOR`     | Optional Vercel Connect connector UID (default `github/factory`)                 |
