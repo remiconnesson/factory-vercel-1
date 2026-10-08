@@ -53,7 +53,8 @@ export async function codingStationWorkflow(input: { station: 'spec' | 'implemen
         await setLabels(issue, [config.labels.blocked]);
         return;
       }
-      if (headSha === baseSha) {
+      // A first implementation must change something. A revision may rightly change nothing: it goes back to Review.
+      if (headSha === baseSha && !revision) {
         await comment(issue, `The implement station finished without changing any file.\n\n${result.summary ?? ''}`);
         await setLabels(issue, [config.labels.blocked]);
         return;
