@@ -89,3 +89,13 @@ describe("the orchestrator's decisions (orchestrator.cedar)", () => {
     expect(mayDeleteSandbox({ merged: true, fromFork: true }).allow).toBe(false);
   });
 });
+
+describe('callers hold richer objects than the schema declares', () => {
+  // The shell passes what it has (factoryPrState returns the PR's number too); Cedar rejects unknown fields.
+  it('a PR with its number', () => expect(mayDeleteSandbox({ number: 6, merged: true, fromFork: false } as { merged: boolean; fromFork: boolean }).allow).toBe(true));
+  it('facts with extra keys', () => {
+    const extra = { verifyPassed: true, changesAllowed: true, changedSomething: true, log: '…' };
+    expect(mayMarkReady('implement', extra).allow).toBe(true);
+    expect(maySendBack({ verdict: 'changes-requested', reviewRounds: 1, pr: 6 } as { verdict: 'changes-requested'; reviewRounds: number }).allow).toBe(true);
+  });
+});

@@ -1,4 +1,6 @@
 // The questions the factory asks its rules (core/rules/*.cedar), as pure functions of plain facts.
+// Entities and context are built field by field: Cedar validates them against the schema and rejects any extra field,
+// and callers often hold richer objects (a PR with its number, say).
 import { decide, type Uid } from './decide';
 import type { Capability, Decision, SandboxStation, Station, Trigger, Verdict } from './types';
 
@@ -44,17 +46,19 @@ export function refusedChanges(s: SandboxStation, paths: readonly string[]) {
 /** May Dev's PR be marked ready for review? */
 export function mayMarkReady(s: SandboxStation, facts: { verifyPassed: boolean; changesAllowed: boolean; changedSomething: boolean }): Decision {
   const pr = { uid: uid('PullRequest', 'pr'), attrs: { fromFork: false, draft: true, merged: false }, parents: [] };
-  return decide({ principal: station(s), action: 'markReady', resource: pr.uid, context: facts, entities: [pr] });
+  const { verifyPassed, changesAllowed, changedSomething } = facts;
+  return decide({ principal: station(s), action: 'markReady', resource: pr.uid, context: { verifyPassed, changesAllowed, changedSomething }, entities: [pr] });
 }
 
 /** Should Review send the PR back to Dev? */
 export function maySendBack(facts: { verdict: Verdict; reviewRounds: number }): Decision {
   const pr = { uid: uid('PullRequest', 'pr'), attrs: { fromFork: false, draft: false, merged: false }, parents: [] };
-  return decide({ principal: station('review'), action: 'sendBackToDev', resource: pr.uid, context: facts, entities: [pr] });
+  const { verdict, reviewRounds } = facts;
+  return decide({ principal: station('review'), action: 'sendBackToDev', resource: pr.uid, context: { verdict, reviewRounds }, entities: [pr] });
 }
 
 /** May the issue's sandbox be deleted, given its PR's state? */
 export function mayDeleteSandbox(pr: { merged: boolean; fromFork: boolean }): Decision {
-  const entity = { uid: uid('PullRequest', 'pr'), attrs: { ...pr, draft: false }, parents: [] };
+  const entity = { uid: uid('PullRequest', 'pr'), attrs: { merged: pr.merged, fromFork: pr.fromFork, draft: false }, parents: [] };
   return decide({ principal: station('cleanup'), action: 'deleteSandbox', resource: entity.uid, entities: [entity] });
 }
