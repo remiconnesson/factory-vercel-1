@@ -49,6 +49,7 @@ const revise = args.includes('--revise');
 let last = '';
 let approved = false;
 let revisionAsked = false;
+let forced = false; // Review found nothing blocking, so the revision may rightly change nothing
 let commitsAtFirstReview = 0;
 let s = state();
 while (Date.now() < deadline) {
@@ -67,6 +68,7 @@ while (Date.now() < deadline) {
       s = state();
       if (!s.labels.includes(labels.changesRequested) && !s.labels.includes(labels.running)) {
         gh(['issue', 'edit', String(issue), '-R', repo, '--add-label', labels.changesRequested]);
+        forced = true;
         r.info(`Review found nothing blocking; applied ${labels.changesRequested} to exercise the revision`);
       }
     } else r.info('Review requested changes itself');
@@ -93,7 +95,7 @@ if (approved || s.labels.includes(labels.readyToImplement)) {
   r.check('PR marked ready', s.pr?.isDraft === false);
   r.check('review posted', s.reviews > 0);
   if (revise) {
-    r.check('revision pushed more commits', (s.pr?.commits ?? 0) > commitsAtFirstReview, `${commitsAtFirstReview} → ${s.pr?.commits}`);
+    if (!forced) r.check('revision pushed more commits', (s.pr?.commits ?? 0) > commitsAtFirstReview, `${commitsAtFirstReview} → ${s.pr?.commits}`);
     r.check('second review posted', s.reviews >= 2);
   }
 }
