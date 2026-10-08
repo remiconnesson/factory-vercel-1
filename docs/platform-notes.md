@@ -73,6 +73,9 @@ says what to do about it. `pnpm check <name>` re-verifies the ones marked with a
   fails to parse ("expected single entity uid or template slot, found set of entity uids"); put it in `when`.
 - **Policy ids come from the policy set, not from `@id`.** `isAuthorized` reports the ids of the policies that
   decided, so `scripts/bundle.mjs` passes the policies as a map keyed by their `@id` annotation.
+- **With `validateRequest`, an entity attribute or context key the schema doesn't declare fails the request**
+  ("attribute `number` … should not exist according to the schema"). TypeScript lets richer objects through, so
+  `core/questions.ts` copies fields one by one. The first real merge found this; the tests now pass richer objects.
 - **A deny with no matching permit has no reason.** Only a matching `forbid` names itself; explaining a missing permit
   is up to the caller (see `lib/handlers.ts`).
 - **Use the `nodejs` build and keep it external** (`serverExternalPackages` in `next.config.ts`), so Next.js traces

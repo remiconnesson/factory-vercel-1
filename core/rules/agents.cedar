@@ -12,13 +12,11 @@ when { principal in [Factory::Station::"implement", Factory::Station::"revise"] 
 permit (principal == Factory::Station::"spec", action == Factory::Action::"change", resource)
 when { resource.path like "specs/*" };
 
+// Dev's prompt asks it to leave specs/ alone, but no rule can enforce that yet: the orchestrator judges Dev's PR by its
+// whole diff, which always includes the specs Spec committed to the same branch.
 @id("Dev changes the code")
 permit (principal, action == Factory::Action::"change", resource)
 when { principal in [Factory::Station::"implement", Factory::Station::"revise"] };
-
-@id("Dev leaves the approved specs alone")
-forbid (principal, action == Factory::Action::"change", resource)
-when { principal in [Factory::Station::"implement", Factory::Station::"revise"] && resource.path like "specs/*" };
 
 @id("no station changes CI")
 forbid (principal, action == Factory::Action::"change", resource)

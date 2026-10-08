@@ -62,8 +62,13 @@ try {
   await sh(sbx, 'echo leftover > docs/leftover.md');
   const fin = await finishDevBranch(sandboxId, 'implement', { pr }, 'check: leftovers');
   r.check('finish step commits and pushes leftovers', fin.committedLeftovers && (await head()) === fin.headSha, fin.headSha.slice(0, 7));
-  const paths = await prChangedPaths(pr);
-  r.check('PR paths visible to the protected-path check, no workflow file', paths.includes('docs/leftover.md') && !paths.some((p) => p.startsWith('.github/')), paths.join(', '));
+  // GitHub updates a PR's file list shortly after a push.
+  let paths: string[] = [];
+  for (let i = 0; i < 10 && !paths.includes('docs/leftover.md'); i++) {
+    if (i) await new Promise((res) => setTimeout(res, 2000));
+    paths = await prChangedPaths(pr);
+  }
+  r.check("PR paths visible to the rules' path check, no workflow file", paths.includes('docs/leftover.md') && !paths.some((p) => p.startsWith('.github/')), paths.join(', '));
 } catch (e) {
   r.fail('dev', e);
 } finally {

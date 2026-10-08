@@ -54,7 +54,7 @@ describe('what each station may change (agents.cedar)', () => {
     ['spec', 'app/page.tsx', false],
     ['spec', '.github/workflows/ci.yml', false],
     ['implement', 'app/api/health/route.ts', true],
-    ['implement', 'specs/1/TECH.md', false],
+    ['implement', 'specs/1/TECH.md', true], // judged on the PR's whole diff, which includes Spec's commit
     ['implement', '.github/CODEOWNERS', false],
     ['implement', 'pnpm-lock.yaml', false],
     ['revise', 'packages/web/package-lock.json', false],

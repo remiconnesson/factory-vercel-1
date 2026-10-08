@@ -35,7 +35,7 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
   only (`lib/github-access.ts`, `github-dev` skill). GitHub enforces what the firewall can't see: rulesets confine bot
   pushes to `factory/**` branches and keep `main` behind reviewed PRs, and the token has no `workflows` scope. Spec's
   changes are committed by the host through the Git Data API, only if the rules allow every path; for Dev, the
-  orchestrator checks the PR's whole diff against the same rules (no `.github/`, no lockfiles, specs untouched)
+  orchestrator checks the PR's whole diff against the same rules (no `.github/`, no lockfiles)
   before marking it ready.
 - Sandbox agents get read-only Vercel access to the project through the `vercel-debug` skill (`factory/skills/`):
   deployments, build logs, runtime logs and requests to the branch preview and production. The project-scoped
