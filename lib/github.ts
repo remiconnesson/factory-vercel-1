@@ -2,23 +2,37 @@ import { connectGithubToken } from '@github-tools/sdk/connect';
 import { createOctokit, resolveGithubToken } from '@github-tools/sdk';
 import { config, repoFull } from './config';
 
-// Read-only token narrowed to ONE repo: used by agents' tools and for the sandbox clone.
-export const readToken = connectGithubToken(config.connector, {
-  preset: 'repo-explorer',
-  params: { repositories: [repoFull] },
+// Every token is narrowed to ONE repo and to explicit GitHub App permissions. Connect applies `permissions` in the
+// authorization details (format `name:level`); it ignores `scopes` for GitHub App tokens, which then carry the app's
+// full permission set. Verified: a token minted with only read permissions gets 403 on writes.
+const narrowed = (...permissions: string[]) => ({
+  authorizationDetails: [{ type: 'github_app_installation' as const, repositories: [repoFull], permissions }],
 });
 
-// Write token narrowed to ONE repo: used only by orchestrator steps, never by an agent.
-// Scope strings mirror GitHub App permissions (see PRESET_CONNECT_SCOPES in @github-tools/sdk/connect).
+// Read-only: agents' tools (Triage, Review) and the sandbox clone.
+export const readToken = connectGithubToken(config.connector, {
+  preset: 'repo-explorer',
+  params: narrowed('metadata:read', 'contents:read', 'pull_requests:read', 'issues:read', 'checks:read', 'statuses:read', 'actions:read'),
+});
+
+// Orchestrator writes (commits, PRs, labels, comments); never reaches an agent.
 export const writeToken = connectGithubToken(config.connector, {
-  params: {
-    repositories: [repoFull],
-    scopes: ['metadata:read', 'contents:write', 'pull_requests:write', 'issues:write'],
-  },
+  params: narrowed('metadata:read', 'contents:write', 'pull_requests:write', 'issues:write'),
+});
+
+// Dev (Implement): push the factory branch and work on its PR. Never handed to the agent: the sandbox firewall
+// injects it on the allowlisted git and API paths only (lib/github-access.ts). Without the `workflows` permission,
+// GitHub refuses pushes that touch .github/workflows. The repo's rulesets confine bot pushes to factory/** branches.
+export const devToken = connectGithubToken(config.connector, {
+  params: narrowed('metadata:read', 'contents:write', 'pull_requests:write', 'issues:read', 'checks:read', 'statuses:read', 'actions:read'),
 });
 
 export async function mintReadToken() {
   return resolveGithubToken(readToken);
+}
+
+export async function mintDevToken() {
+  return resolveGithubToken(devToken);
 }
 
 export async function gh() {
@@ -85,4 +99,26 @@ export async function upsertPr(station: 'spec' | 'implement', issue: number, bra
     await o.graphql(`mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`, { id: pr.node_id });
   }
   return pr.number;
+}
+
+/** Before Dev runs: its PR exists and is a draft, so its pushes don't start Review mid-run. */
+export async function prepareDevPr(issue: number, branch: string, title: string) {
+  const o = await gh();
+  const { owner, repo } = config;
+  const { data: open } = await o.rest.pulls.list({ owner, repo, head: `${owner}:${branch}`, state: 'open' });
+  let pr: { number: number; draft?: boolean; node_id: string } | undefined = open[0];
+  if (!pr) {
+    const base = (await o.rest.repos.get({ owner, repo })).data.default_branch;
+    pr = (await o.rest.pulls.create({ owner, repo, head: branch, base, title: `[factory] ${title} (#${issue})`, body: `Factory PR for #${issue}.`, draft: true })).data;
+  } else if (!pr.draft) {
+    await o.graphql(`mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { clientMutationId } }`, { id: pr.node_id });
+  }
+  return pr.number;
+}
+
+/** Every path the PR changes (both sides of a rename), for the protected-path check after Dev pushed. */
+export async function prChangedPaths(pr: number) {
+  const o = await gh();
+  const files = await o.paginate(o.rest.pulls.listFiles, { owner: config.owner, repo: config.repo, pull_number: pr, per_page: 100 });
+  return files.flatMap((f) => [f.filename, ...(f.previous_filename ? [f.previous_filename] : [])]);
 }

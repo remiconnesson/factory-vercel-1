@@ -18,13 +18,18 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
 
 ## Design rules
 
-- Agents never write to GitHub. Deterministic workflow steps do every write (commits, PRs, labels, comments).
+- Only the Dev (Implement) agent writes to GitHub, and only to its own branch and PR: it pushes so its work builds a
+  Vercel preview it can test, and reads CI results and review comments. Deterministic workflow steps do every other
+  write (Spec's commit, PR creation, labels, comments, marking the PR ready).
 - Triage and Review run in-process (libfx) with read-only GitHub tools. Spec and Implement run fx inside a
   Vercel Sandbox through `@ai-sdk/harness-fx`.
 - No secret enters the sandbox. The AI Gateway credential and a short-lived read-only GitHub token are
   injected by the sandbox firewall; the GitHub rule is removed as soon as the clone and install finish.
-- The sandbox never gets write authority: the host commits through the Git Data API, enforcing allowed and
-  protected paths (`.github/`, lockfiles).
+- Dev's GitHub token stays on the host too: the firewall injects it on this repo's git endpoints and a few API calls
+  only (`lib/github-access.ts`, `github-dev` skill). GitHub enforces what the firewall can't see: rulesets confine bot
+  pushes to `factory/**` branches and keep `main` behind reviewed PRs, and the token has no `workflows` scope. Spec's
+  changes are committed by the host through the Git Data API with allowed and protected paths enforced; for Dev, the
+  orchestrator checks the PR's whole diff for protected paths (`.github/`, lockfiles) before marking it ready.
 - Sandbox agents get read-only Vercel access to the project through the `vercel-debug` skill (`factory/skills/`):
   deployments, build logs, runtime logs and requests to the branch preview and production. The project-scoped
   `FACTORY_VERCEL_TOKEN` and the automation bypass stay on the host; the firewall adds them only to the GET
@@ -35,7 +40,7 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
 ```
 app/api/github/webhook/route.ts   # HMAC check, label state machine → start()
 factory/stations/*.md             # one prompt template per station (bundled at build time)
-factory/skills/*/SKILL.md         # skills for the sandbox agents (bundled at build time)
+factory/skills/*/SKILL.md         # skills for the sandbox agents: vercel-debug, github-dev
 lib/                              # host-only code: GitHub, Connect tokens, libfx, harness, sandbox, commit
 workflows/steps.ts                # the step boundary: lazy-loads lib/ inside "use step" bodies
 workflows/{triage,coding-station,review}.ts

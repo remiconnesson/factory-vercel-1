@@ -2,7 +2,8 @@ import { Sandbox } from '@vercel/sandbox';
 import { createVercelNetworkSandboxSession, resumeVercelNetworkSandboxSession } from '@ai-sdk/sandbox-vercel';
 import { createCodingAgent } from './coding-agent';
 import { config } from './config';
-import { mintReadToken } from './github';
+import { mintDevToken, mintReadToken } from './github';
+import { githubDevRules, githubEnvFile } from './github-access';
 import { gatewayKey } from './ai-gateway';
 import { vercelContext, vercelEnabled, vercelEnvFile, vercelRules } from './vercel';
 
@@ -86,6 +87,9 @@ export async function prepareRepo(sandboxId: string, branch: string) {
     'git tag factory-base',
     'echo ".factory/" >> .git/info/exclude', // the result file is never committed
     'mkdir -p .factory',
+    // Identity for the Dev agent's own commits (the orchestrator's commits go through the API).
+    'git config user.name "Software Factory"',
+    'git config user.email "factory@users.noreply.github.com"',
   ].join(' && '));
   const baseSha = (await sh(sbx, 'git rev-parse HEAD')).stdout.trim();
 
@@ -99,19 +103,56 @@ export async function prepareRepo(sandboxId: string, branch: string) {
 
 type Slice = { done: boolean; continuation?: unknown; text?: string };
 
+/** Dev (Implement) only: push its factory branch and work on its PR. */
+export type DevAccess = { pr: number };
+
+const currentBranch = async (sbx: Sandbox) => (await sh(sbx, 'git branch --show-current')).stdout.trim();
+
 /**
- * The agent's policy: lockdown plus read-only Vercel access to the project (when configured). Refreshed every slice,
- * so the preview host follows new deployments. Writes the identifiers the vercel-debug skill reads.
+ * The agent's policy: lockdown, plus read-only Vercel access to the project (when configured), plus GitHub push/PR
+ * access for Dev. Refreshed every slice, so credentials stay fresh and the preview host follows new deployments.
+ * Writes the identifiers the vercel-debug and github-dev skills read.
  */
-async function agentPolicy(sbx: Sandbox, key: string) {
-  const lockdown = lockdownPolicy(key);
-  if (!vercelEnabled()) return lockdown;
-  const ctx = await vercelContext((await sh(sbx, 'git branch --show-current')).stdout.trim());
-  await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/vercel.env`, content: Buffer.from(vercelEnvFile(ctx)) }]);
-  return { allow: { ...lockdown.allow, ...vercelRules(ctx) } };
+async function agentPolicy(sbx: Sandbox, key: string, dev?: DevAccess) {
+  const allow: Record<string, unknown> = { ...lockdownPolicy(key).allow };
+  const branch = await currentBranch(sbx);
+  if (vercelEnabled()) {
+    const ctx = await vercelContext(branch);
+    await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/vercel.env`, content: Buffer.from(vercelEnvFile(ctx)) }]);
+    Object.assign(allow, vercelRules(ctx));
+  }
+  if (dev) {
+    await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/github.env`, content: Buffer.from(githubEnvFile(branch, dev.pr)) }]);
+    Object.assign(allow, githubDevRules(await mintDevToken(), dev.pr));
+  }
+  return { allow } as Parameters<Sandbox['update']>[0]['networkPolicy'];
 }
 
-export async function runAgentSlice(args: { sandboxId: string; sessionId: string; prompt?: string; continuation?: unknown }): Promise<Slice> {
+/**
+ * Dev, at the end: commit what the agent left uncommitted and push the branch, through the same brokered access.
+ * Returns the pushed head.
+ */
+export async function finishDevBranch(sandboxId: string, dev: DevAccess, message: string) {
+  const sbx = await native(sandboxId);
+  const key = await gatewayKey();
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, key, dev) });
+  try {
+    const branch = await currentBranch(sbx);
+    await sh(sbx, 'git add -A');
+    const dirty = (await sh(sbx, 'git diff --cached --quiet')).exitCode !== 0;
+    if (dirty) {
+      const c = await run(sbx, 'git', ['commit', '-q', '-m', message]);
+      if (c.exitCode !== 0) throw new Error(`commit failed: ${c.stderr}`);
+    }
+    const push = await run(sbx, 'git', ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`]);
+    if (push.exitCode !== 0) throw new Error(`push failed: ${push.stderr.slice(-2000)}`);
+    return { headSha: (await sh(sbx, 'git rev-parse HEAD')).stdout.trim(), committedLeftovers: dirty };
+  } finally {
+    await sbx.update({ networkPolicy: lockdownPolicy(key) });
+  }
+}
+
+export async function runAgentSlice(args: { sandboxId: string; sessionId: string; prompt?: string; continuation?: unknown; dev?: DevAccess }): Promise<Slice> {
   const agent = await createCodingAgent();
   const sbx = await native(args.sandboxId);
   const key = await gatewayKey();
@@ -124,7 +165,7 @@ export async function runAgentSlice(args: { sandboxId: string; sessionId: string
       : { sessionId: args.sessionId, sandboxSession },
   );
   // Then replace whatever the harness configured with the agent's policy.
-  await sbx.update({ networkPolicy: await agentPolicy(sbx, key) });
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, key, args.dev) });
 
   const result = args.continuation
     ? await agent.continueGenerate({ session })

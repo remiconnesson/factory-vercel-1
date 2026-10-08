@@ -4,7 +4,7 @@
 // workflow file imports. So host code (Octokit, Connect, Sandbox, harnesses, libfx) is loaded
 // lazily inside step bodies, which the workflow build replaces with step calls.
 import type { StationResult } from '@/lib/github';
-import type { Change } from '@/lib/sandbox';
+import type { Change, DevAccess } from '@/lib/sandbox';
 import type { Review } from '@/lib/review';
 
 // GitHub writes and reads (orchestrator only, write token never reaches an agent)
@@ -27,6 +27,16 @@ export async function setLabels(issue: number, add: string[], remove: string[] =
 export async function upsertPr(station: 'spec' | 'implement', issue: number, branch: string, title: string, result: StationResult, verify?: { ok: boolean }) {
   'use step';
   return (await import('@/lib/github')).upsertPr(station, issue, branch, title, result, verify);
+}
+
+export async function prepareDevPr(issue: number, branch: string, title: string) {
+  'use step';
+  return (await import('@/lib/github')).prepareDevPr(issue, branch, title);
+}
+
+export async function prChangedPaths(pr: number) {
+  'use step';
+  return (await import('@/lib/github')).prChangedPaths(pr);
 }
 
 export async function commitChanges(a: { branch: string; baseSha: string; message: string; changes: Change[]; allowedPaths?: string[] }) {
@@ -63,7 +73,7 @@ export async function prepareRepo(sandboxId: string, branch: string) {
   return (await import('@/lib/sandbox')).prepareRepo(sandboxId, branch);
 }
 
-export async function runAgentSlice(args: { sandboxId: string; sessionId: string; prompt?: string; continuation?: unknown }) {
+export async function runAgentSlice(args: { sandboxId: string; sessionId: string; prompt?: string; continuation?: unknown; dev?: DevAccess }) {
   'use step';
   return (await import('@/lib/sandbox')).runAgentSlice(args);
 }
@@ -71,6 +81,11 @@ export async function runAgentSlice(args: { sandboxId: string; sessionId: string
 export async function runVerify(sandboxId: string, command: string) {
   'use step';
   return (await import('@/lib/sandbox')).runVerify(sandboxId, command);
+}
+
+export async function finishDevBranch(sandboxId: string, dev: DevAccess, message: string) {
+  'use step';
+  return (await import('@/lib/sandbox')).finishDevBranch(sandboxId, dev, message);
 }
 
 export async function readResult(sandboxId: string): Promise<StationResult> {

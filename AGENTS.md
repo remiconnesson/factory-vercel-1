@@ -13,6 +13,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Workflow files (`workflows/*.ts` with `"use workflow"`) may import only `@/lib/config`, `@/lib/stations` and
   `./steps`. Anything else ends up in the workflow VM bundle, which has no Node.js and fails on load.
 - New steps go in `workflows/steps.ts` and load their host module with `await import(...)` inside the step body.
-- Agents never get GitHub write access. GitHub writes happen only in orchestrator steps (`lib/github.ts`, `lib/commit.ts`).
+- Only the Dev (Implement) agent gets GitHub write access: pushing its own `factory/issue-<n>` branch and editing its PR,
+  brokered by the sandbox firewall (`lib/github-access.ts`) and confined by the repo's rulesets. Every other GitHub
+  write happens in orchestrator steps (`lib/github.ts`, `lib/commit.ts`).
 - Station prompts live in `factory/stations/*.md`; `pnpm stations` regenerates `lib/stations.generated.json`.
 - `./scripts/verify` must pass before a change is done.
