@@ -1,19 +1,22 @@
+import type { Named } from '@gdp-ts/core';
+import type { ChangesAllowed } from '@/proofs/changes-allowed';
 import { config } from './config';
 import { gh } from './github';
 import type { Change } from './sandbox';
 
-export async function commitChanges(a: { branch: string; baseSha: string; message: string; changes: Change[]; allowedPaths?: string[] }) {
-  for (const c of a.changes) {
-    if (config.protectedPaths.some((r) => r.test(c.path))) throw new Error(`Refusing protected path: ${c.path}`);
-    if (a.allowedPaths && !a.allowedPaths.some((p) => c.path.startsWith(p))) throw new Error(`Outside allowed paths: ${c.path}`);
-  }
-  if (a.changes.length === 0) return null;
+/** Commits a station's changes from the host, through the Git Data API. Demands proof the rules allow every path. */
+export async function commitChanges<S, C>(
+  changes: Named<C, Change[]>,
+  a: { branch: string; baseSha: string; message: string },
+  _proof: ChangesAllowed<S, C>,
+) {
+  if (changes.value.length === 0) return null;
 
   const o = await gh();
   const { owner, repo } = config;
   const base = await o.rest.git.getCommit({ owner, repo, commit_sha: a.baseSha });
 
-  const tree = await Promise.all(a.changes.map(async (c) => ({
+  const tree = await Promise.all(changes.value.map(async (c) => ({
     path: c.path,
     mode: c.mode as '100644' | '100755',
     type: 'blob' as const,

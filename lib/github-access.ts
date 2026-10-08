@@ -1,4 +1,5 @@
 import type { NetworkPolicyRule } from '@vercel/sandbox';
+import type { StationMayPush } from '@/proofs/station-may-push';
 import { config } from './config';
 
 // GitHub access for the Dev (Implement) agent (factory/skills/github-dev). The firewall injects the Dev token only on
@@ -16,7 +17,8 @@ const deny = (what: string): NetworkPolicyRule => ({
   },
 });
 
-export function githubDevRules(token: string, pr: number): Record<string, NetworkPolicyRule[]> {
+/** Demands proof that the rules let this station push its branch. */
+export function githubDevRules<S>(token: string, pr: number, _proof: StationMayPush<S>): Record<string, NetworkPolicyRule[]> {
   const { owner, repo } = config;
   const r = `/repos/${esc(owner)}/${esc(repo)}`;
   const bearer = [{ headers: { Authorization: `Bearer ${token}` } }];

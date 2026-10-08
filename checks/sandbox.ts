@@ -3,8 +3,8 @@
 import { repoFull } from '../lib/config';
 import { gatewayKey } from '../lib/ai-gateway';
 import { mintReadToken } from '../lib/github';
-import { destroyIssueSandbox, ensureSandbox, lockdownPolicy, native, prepareRepo, readChanges, readResult, runAgentSlice, runVerify, stopSandbox } from '../lib/sandbox';
-import { httpStatus, report, secretsAbsent, sh } from './_lib';
+import { ensureSandbox, lockdownPolicy, native, prepareRepo, readChanges, readResult, runAgentSlice, runVerify, stopSandbox } from '../lib/sandbox';
+import { deleteCheckSandbox, httpStatus, report, secretsAbsent, sh } from './_lib';
 
 const r = report(`sandbox stations on ${repoFull}`);
 const issue = 80000 + Math.floor(Math.random() * 9999); // a throwaway issue number: its sandbox is deleted at the end
@@ -38,7 +38,7 @@ try {
   r.check('AI Gateway without the injected key: rejected', gw === '401' || gw === '403', gw);
   await sbx.update({ networkPolicy: lockdownPolicy(key) });
 
-  const slice = await runAgentSlice({ sandboxId, sessionId: `${runId}-0`, prompt: [
+  const slice = await runAgentSlice({ sandboxId, station: 'spec', sessionId: `${runId}-0`, prompt: [
     'This is a check. Create the file check.txt containing "ok". Then run `curl -s -m 5 https://example.com >/dev/null && echo REACHED || echo BLOCKED`.',
     'Write .factory/result.json: {"summary": "<the curl result>"}. Change nothing else.',
   ].join('\n') });
@@ -61,6 +61,6 @@ try {
 } catch (e) {
   r.fail('sandbox', e);
 } finally {
-  await destroyIssueSandbox(issue);
+  await deleteCheckSandbox(issue);
 }
 r.done();

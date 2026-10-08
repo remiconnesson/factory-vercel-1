@@ -1,0 +1,34 @@
+// The factory's vocabulary: who acts, on what, and the actions the business rules decide.
+namespace Factory {
+  // GitHub accounts. `kind` is GitHub's account type: "User" or "Bot". Allowed users are members of
+  // Group::"allowed" (FACTORY_ALLOWED_USERS).
+  entity Group;
+  entity Account in [Group] { kind: String };
+
+  entity Issue { author: Account };
+  entity PullRequest { fromFork: Bool, draft: Bool, merged: Bool };
+
+  // The factory's own stations: "triage", "spec", "implement", "revise", "review", "cleanup".
+  entity Station;
+  // What a sandbox agent can reach beyond the model: "vercel" (read-only deployments, logs, previews) and
+  // "github-push" (its branch and PR).
+  entity Capability;
+  entity Path { path: String };
+
+  // Webhook triggers: who may start what.
+  action "startTriage", "startSpec", "startImplement", "startRevision" appliesTo { principal: Account, resource: Issue };
+  action "startReview", "startCleanup" appliesTo { principal: Account, resource: PullRequest };
+
+  // What a station's agent may use, and which files a station may change.
+  action "use" appliesTo { principal: Station, resource: Capability };
+  action "change" appliesTo { principal: Station, resource: Path };
+
+  // Orchestrator decisions.
+  action "markReady" appliesTo {
+    principal: Station,
+    resource: PullRequest,
+    context: { verifyPassed: Bool, changesAllowed: Bool, changedSomething: Bool },
+  };
+  action "sendBackToDev" appliesTo { principal: Station, resource: PullRequest, context: { verdict: String, reviewRounds: Long } };
+  action "deleteSandbox" appliesTo { principal: Station, resource: PullRequest };
+}

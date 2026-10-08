@@ -4,8 +4,8 @@
 import { createHmac } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { config, repoFull } from '../lib/config';
-import { destroyIssueSandbox, ensureSandbox, issueSandboxName } from '../lib/sandbox';
-import { report } from './_lib';
+import { ensureSandbox, issueSandboxName } from '../lib/sandbox';
+import { deleteCheckSandbox, report } from './_lib';
 
 const url = process.argv[2];
 const secret = process.env.FACTORY_WEBHOOK_SECRET;
@@ -45,6 +45,6 @@ try {
 } catch (e) {
   r.fail('cleanup', e);
 } finally {
-  await destroyIssueSandbox(issue).catch(() => {});
+  await deleteCheckSandbox(issue).catch(() => {});
 }
 r.done();

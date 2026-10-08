@@ -2,6 +2,7 @@
 # Definition of done for the implementation agent; the orchestrator re-runs it itself.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-pnpm run stations
+pnpm run bundle
 pnpm run lint
 pnpm run typecheck
+pnpm run test

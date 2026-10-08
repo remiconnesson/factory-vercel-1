@@ -1,10 +1,29 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import gdp from "@gdp-ts/core/lint/eslint";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // Proofs are minted only in proofs/, never forged with `as` (gdp-ts).
+  ...gdp({ proofs: ["proofs/**"] }),
+  // One empty `interface X<…> extends Proof<…> {}` per proof gives each proof its own type (gdp-ts recipe).
+  { files: ["proofs/**/*.ts"], rules: { "@typescript-eslint/no-empty-object-type": ["error", { allowInterfaces: "with-single-extends" }] } },
+  // A sensitive function's `_proof` exists for the type checker only.
+  { rules: { "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }] } },
+  // Functional core: pure. No I/O, no shell, no workflows, no SDKs. Cedar's engine is the one dependency.
+  {
+    files: ["core/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [
+          { group: ["@/lib/*", "../lib/*", "@/proofs/*", "../proofs/*", "@/workflows/*", "../workflows/*", "@/app/*"], message: "core/ is the functional core: it may not depend on the shell." },
+          { group: ["node:*", "workflow", "workflow/*", "@vercel/*", "@ai-sdk/*", "@github-tools/*", "octokit", "libfx", "ai"], message: "core/ is pure: no I/O or SDKs." },
+        ],
+      }],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
@@ -16,6 +35,8 @@ const eslintConfig = defineConfig([
     "app/.well-known/workflow/**",
     // Bundled by scripts/check.mjs:
     ".checks/**",
+    // Installed agent skills:
+    ".agents/**",
   ]),
 ]);
 

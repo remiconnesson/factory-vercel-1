@@ -16,5 +16,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Only the Dev (Implement) agent gets GitHub write access: pushing its own `factory/issue-<n>` branch and editing its PR,
   brokered by the sandbox firewall (`lib/github-access.ts`) and confined by the repo's rulesets. Every other GitHub
   write happens in orchestrator steps (`lib/github.ts`, `lib/commit.ts`).
-- Station prompts live in `factory/stations/*.md`; `pnpm stations` regenerates `lib/stations.generated.json`.
+- Business rules are Cedar policies in `core/rules/*.cedar`, each named with `@id("...")`; the name is the reason
+  users see. Don't encode a rule in TypeScript: add or change a policy and its row in `core/questions.test.ts`.
+- `core/` is pure: no I/O and no imports from `lib/`, `proofs/`, `workflows/` or `app/` (lint enforces it).
+- Proofs (`@gdp-ts/core`) are made only in `proofs/`. A function that does something the rules must allow takes the
+  proof as an argument; add the mistake it prevents to `test/mistakes.ts`.
+- Cedar is wasm: import `core/decide.ts` (and anything that uses it) from host code only, never from workflow files.
+- Station prompts live in `factory/stations/*.md`, skills in `factory/skills/`; `pnpm bundle` regenerates the
+  generated JSON for stations, skills and rules (`dev`, `build`, `typecheck` and `test` run it first).
 - `./scripts/verify` must pass before a change is done.

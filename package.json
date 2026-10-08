@@ -3,19 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "stations": "node scripts/build-stations.mjs",
-    "dev": "pnpm run stations && next dev",
-    "build": "pnpm run stations && next build",
+    "dev": "pnpm run bundle && next dev",
+    "build": "pnpm run bundle && next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "pnpm run stations && tsc --noEmit",
+    "typecheck": "pnpm run bundle && tsc --noEmit",
     "verify": "./scripts/verify",
-    "check": "pnpm run stations && node scripts/check.mjs"
+    "check": "pnpm run bundle && node scripts/check.mjs",
+    "bundle": "node scripts/bundle.mjs",
+    "test": "pnpm run bundle && vitest run"
   },
   "dependencies": {
     "@ai-sdk/harness": "1.0.139",
     "@ai-sdk/harness-fx": "1.0.53",
     "@ai-sdk/sandbox-vercel": "1.0.139",
+    "@cedar-policy/cedar-wasm": "^4.13.0",
+    "@gdp-ts/core": "^0.1.0",
     "@github-tools/sdk": "^1.17.0",
     "@vercel/connect": "^2.4.0",
     "@vercel/oidc": "^4.0.0",
@@ -36,7 +39,8 @@
     "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.3"
   },
   "packageManager": "pnpm@12.9.1",
   "engines": {

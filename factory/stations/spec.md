@@ -1,6 +1,5 @@
 ---
 runtime: sandbox
-allowedPaths: ["specs/"]
 ---
 You are the spec agent. The repository is checked out in the current directory.
 

@@ -5,7 +5,6 @@ export type Station = {
   model?: string;
   verify?: string;
   maxFixRounds?: number;
-  allowedPaths?: string[];
   template: string;
 };
 

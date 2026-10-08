@@ -2,7 +2,13 @@ import { Sandbox } from '@vercel/sandbox';
 import { createVercelNetworkSandboxSession, resumeVercelNetworkSandboxSession } from '@ai-sdk/sandbox-vercel';
 import { createCodingAgent } from './coding-agent';
 import { config } from './config';
+import { name, type Named } from '@gdp-ts/core';
+import type { SandboxStation } from '@/core/types';
+import type { SandboxDeletable } from '@/proofs/sandbox-deletable';
+import { stationMayPush } from '@/proofs/station-may-push';
+import { stationMayReadVercel } from '@/proofs/station-may-read-vercel';
 import { mintDevToken, mintReadToken } from './github';
+import type { IssueNumber } from './ids';
 import { githubDevRules, githubEnvFile } from './github-access';
 import { gatewayKey } from './ai-gateway';
 import { vercelContext, vercelEnabled, vercelEnvFile, vercelRules } from './vercel';
@@ -101,9 +107,9 @@ export async function stopSandbox(sandboxId: string) {
   }
 }
 
-/** The PR was merged: delete the issue's sandbox and its snapshots. */
-export async function destroyIssueSandbox(issue: number) {
-  const sbx = await Sandbox.get({ name: issueSandboxName(issue) }).catch((e) => (apiStatus(e) === 404 ? undefined : Promise.reject(e)));
+/** Deletes the issue's sandbox and its snapshots. Demands proof that the rules allow it (the PR was merged). */
+export async function destroyIssueSandbox<I>(issue: Named<I, IssueNumber>, _proof: SandboxDeletable<I>) {
+  const sbx = await Sandbox.get({ name: issueSandboxName(issue.value) }).catch((e) => (apiStatus(e) === 404 ? undefined : Promise.reject(e)));
   await sbx?.delete({ deleteOrphanSnapshots: true });
   return Boolean(sbx);
 }
@@ -153,39 +159,43 @@ export type DevAccess = { pr: number };
 const currentBranch = async (sbx: Sandbox) => (await sh(sbx, 'git branch --show-current')).stdout.trim();
 
 /**
- * The agent's policy: lockdown, plus read-only Vercel access to the project (when configured), plus GitHub push/PR
- * access for Dev. Refreshed every slice, so credentials stay fresh and the preview host follows new deployments.
- * Writes the identifiers the vercel-debug and github-dev skills read.
+ * The agent's policy: lockdown, plus what the rules let this station use (core/rules/agents.cedar): read-only Vercel
+ * access, and for Dev, pushing its branch and working on its PR. Refreshed every slice, so credentials stay fresh and
+ * the preview host follows new deployments. Writes the identifiers the vercel-debug and github-dev skills read.
  */
-async function agentPolicy(sbx: Sandbox, key: string, dev?: DevAccess) {
-  const allow: Record<string, unknown> = { ...lockdownPolicy(key).allow };
-  const branch = await currentBranch(sbx);
-  if (vercelEnabled()) {
-    const ctx = await vercelContext(branch);
-    await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/vercel.env`, content: Buffer.from(vercelEnvFile(ctx)) }]);
-    Object.assign(allow, vercelRules(ctx));
-  }
-  if (dev) {
-    await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/github.env`, content: Buffer.from(githubEnvFile(branch, dev.pr)) }]);
-    Object.assign(allow, githubDevRules(await mintDevToken(), dev.pr));
-  }
-  return { allow } as Parameters<Sandbox['update']>[0]['networkPolicy'];
+function agentPolicy(sbx: Sandbox, key: string, station: SandboxStation, dev?: DevAccess) {
+  return name(station, async (st) => {
+    const allow: Record<string, unknown> = { ...lockdownPolicy(key).allow };
+    const branch = await currentBranch(sbx);
+    const vercel = stationMayReadVercel(st);
+    if (vercel && vercelEnabled()) {
+      const ctx = await vercelContext(branch);
+      await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/vercel.env`, content: Buffer.from(vercelEnvFile(ctx)) }]);
+      Object.assign(allow, vercelRules(ctx, vercel));
+    }
+    const push = dev ? stationMayPush(st) : null;
+    if (push && dev) {
+      await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/github.env`, content: Buffer.from(githubEnvFile(branch, dev.pr)) }]);
+      Object.assign(allow, githubDevRules(await mintDevToken(), dev.pr, push));
+    }
+    return { allow } as Parameters<Sandbox['update']>[0]['networkPolicy'];
+  });
 }
 
 /** Applies the agent's policy to a sandbox, as runAgentSlice does once the harness has started. Used by the checks. */
-export async function applyAgentPolicy(sandboxId: string, dev?: DevAccess) {
+export async function applyAgentPolicy(sandboxId: string, station: SandboxStation, dev?: DevAccess) {
   const sbx = await native(sandboxId);
-  await sbx.update({ networkPolicy: await agentPolicy(sbx, await gatewayKey(), dev) });
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, await gatewayKey(), station, dev) });
 }
 
 /**
  * Dev, at the end: commit what the agent left uncommitted and push the branch, through the same brokered access.
  * Returns the pushed head.
  */
-export async function finishDevBranch(sandboxId: string, dev: DevAccess, message: string) {
+export async function finishDevBranch(sandboxId: string, station: SandboxStation, dev: DevAccess, message: string) {
   const sbx = await native(sandboxId);
   const key = await gatewayKey();
-  await sbx.update({ networkPolicy: await agentPolicy(sbx, key, dev) });
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, key, station, dev) });
   try {
     const branch = await currentBranch(sbx);
     await sh(sbx, 'git add -A');
@@ -202,7 +212,7 @@ export async function finishDevBranch(sandboxId: string, dev: DevAccess, message
   }
 }
 
-export async function runAgentSlice(args: { sandboxId: string; sessionId: string; prompt?: string; continuation?: unknown; dev?: DevAccess }): Promise<Slice> {
+export async function runAgentSlice(args: { sandboxId: string; station: SandboxStation; sessionId: string; prompt?: string; continuation?: unknown; dev?: DevAccess }): Promise<Slice> {
   const agent = await createCodingAgent();
   const sbx = await native(args.sandboxId);
   const key = await gatewayKey();
@@ -215,7 +225,7 @@ export async function runAgentSlice(args: { sandboxId: string; sessionId: string
       : { sessionId: args.sessionId, sandboxSession },
   );
   // Then replace whatever the harness configured with the agent's policy.
-  await sbx.update({ networkPolicy: await agentPolicy(sbx, key, args.dev) });
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, key, args.station, args.dev) });
 
   const result = args.continuation
     ? await agent.continueGenerate({ session })

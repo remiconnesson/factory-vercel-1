@@ -50,3 +50,4 @@ next-env.d.ts
 /.local/
 # bundled checks
 /.checks/
+/core/rules.generated.json

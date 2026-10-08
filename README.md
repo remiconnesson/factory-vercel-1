@@ -11,7 +11,7 @@ AI Gateway, Vercel Connect, the AI SDK fx harness, libfx and GitHub Tools.
 | PR ready / updated   | Review    | Reviews the diff against the specs, gives a verdict             | `factory:changes-requested` or done |
 | `factory:changes-requested` | Implement (revision) | Addresses the latest review, pushes, re-verifies       | marks the PR ready → Review again   |
 
-Review and Dev go back and forth up to 3 rounds (`maxReviewRounds`), then a human takes over. A human merges; an
+Review and Dev go back and forth up to 3 rounds, then a human takes over. A human merges; an
 allowed user can also send a PR back to Dev by applying `factory:changes-requested`.
 
 Each issue has one sandbox for its whole life: Spec creates it, Implement and every revision reuse it (checkout and
@@ -34,23 +34,59 @@ forks never trigger a station. To take an outsider's issue, an allowed user appl
 - Dev's GitHub token stays on the host too: the firewall injects it on this repo's git endpoints and a few API calls
   only (`lib/github-access.ts`, `github-dev` skill). GitHub enforces what the firewall can't see: rulesets confine bot
   pushes to `factory/**` branches and keep `main` behind reviewed PRs, and the token has no `workflows` scope. Spec's
-  changes are committed by the host through the Git Data API with allowed and protected paths enforced; for Dev, the
-  orchestrator checks the PR's whole diff for protected paths (`.github/`, lockfiles) before marking it ready.
+  changes are committed by the host through the Git Data API, only if the rules allow every path; for Dev, the
+  orchestrator checks the PR's whole diff against the same rules (no `.github/`, no lockfiles, specs untouched)
+  before marking it ready.
 - Sandbox agents get read-only Vercel access to the project through the `vercel-debug` skill (`factory/skills/`):
   deployments, build logs, runtime logs and requests to the branch preview and production. The project-scoped
   `FACTORY_VERCEL_TOKEN` and the automation bypass stay on the host; the firewall adds them only to the GET
   endpoints in `lib/vercel.ts` and to the project's own hosts, and answers 403 to everything else.
 
+## Business rules: functional core, imperative shell
+
+Who may start what, what each agent may reach and change, and when the orchestrator may act are
+[Cedar](https://www.cedarpolicy.com) policies, kept apart from the code that talks to GitHub, Vercel and sandboxes:
+
+| Rules                            | Decide                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| `core/rules/triggers.cedar`      | who may start each station (allowed users, the bot continuing their chains, no forks) |
+| `core/rules/agents.cedar`        | which sandbox station may read Vercel or push, and which paths each may change     |
+| `core/rules/orchestrator.cedar`  | when a PR may be marked ready, sent back to Dev (3 rounds) or its sandbox deleted  |
+
+Each policy's `@id` is its name, and the name is the reason the factory reports when a rule refuses something
+("Spec is blocked: … `app/page.tsx` (Spec changes only specs)"). `pnpm bundle` validates the policies against
+`core/rules/factory.cedarschema` and fails the build on an error, an unnamed policy or a duplicate name.
+
+The code follows [gdp-ts](https://github.com/rauchg/gdp-ts) (Ghosts of Departed Proofs) in three layers:
+
+- **Core** (`core/`): pure. Turns a webhook payload into a trigger, asks the rules a question, returns a decision. No
+  I/O and no shell imports (lint enforces both); tested as a decision table in `core/*.test.ts`.
+- **Proofs** (`proofs/`): the only place a proof can be made. Each module gathers the facts it needs, asks the core,
+  and returns a proof about the exact values it checked, or `null`.
+- **Shell** (`lib/`, `workflows/`, `app/`): does the I/O. Every sensitive function demands a proof as an argument:
+  starting a station, firewall rules for Vercel or GitHub push, committing Spec's changes, marking a PR ready,
+  sending it back to Dev, deleting a sandbox. Forgetting a check or using a proof about another value doesn't
+  compile; `test/mistakes.ts` keeps a list of such mistakes that must keep failing to type-check.
+
+`lib/handlers.ts` holds the decision points the workflow steps call: name the values, obtain the proof, act or
+report why not. Cedar runs as wasm on the host only: workflow files never import it.
+
 ## Layout
 
 ```
-app/api/github/webhook/route.ts   # HMAC check, label state machine → start()
+app/api/github/webhook/route.ts   # HMAC check → core/events trigger → MayStart proof → start()
+core/rules/*.cedar                # the business rules, with their schema
+core/{events,questions}.ts        # pure: payload → trigger; questions to the rules → decisions
+proofs/*.ts                       # the only modules that may make proofs
 factory/stations/*.md             # one prompt template per station (bundled at build time)
 factory/skills/*/SKILL.md         # skills for the sandbox agents: vercel-debug, github-dev
 lib/                              # host-only code: GitHub, Connect tokens, libfx, harness, sandbox, commit
+lib/handlers.ts                   # decision points: obtain the proof, then act
 workflows/steps.ts                # the step boundary: lazy-loads lib/ inside "use step" bodies
 workflows/{triage,coding-station,review,cleanup}.ts
-scripts/verify                    # definition of done for Implement (the orchestrator re-runs it)
+scripts/bundle.mjs                # bundles stations, skills and rules (validated) into generated JSON
+scripts/verify                    # bundle, lint, type-check, tests
+test/mistakes.ts                  # code that must not compile
 ```
 
 Workflow functions run in a VM without Node.js, and the workflow bundle keeps every module a workflow file
@@ -123,6 +159,6 @@ See [docs/platform-notes.md](docs/platform-notes.md) for platform behavior these
 pnpm install
 vercel link && vercel env pull   # OIDC token for Connect, Sandbox and AI Gateway
 pnpm dev
-pnpm verify                      # lint + type-check
+pnpm verify                      # bundle + lint + type-check + tests
 pnpm check tokens                # see "Checks and debugging"
 ```

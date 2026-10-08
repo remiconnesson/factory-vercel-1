@@ -3,8 +3,8 @@
 import { createOctokit, resolveGithubToken } from '@github-tools/sdk';
 import { config, repoFull } from '../lib/config';
 import { mintDevToken, prChangedPaths, prepareDevPr, writeToken } from '../lib/github';
-import { applyAgentPolicy, destroyIssueSandbox, ensureSandbox, finishDevBranch, native, prepareRepo } from '../lib/sandbox';
-import { httpStatus, report, secretsAbsent, sh, why } from './_lib';
+import { applyAgentPolicy, ensureSandbox, finishDevBranch, native, prepareRepo } from '../lib/sandbox';
+import { deleteCheckSandbox, httpStatus, report, secretsAbsent, sh, why } from './_lib';
 
 const r = report(`Dev access on ${repoFull}`);
 const { owner, repo } = config;
@@ -25,7 +25,7 @@ try {
   r.info(`throwaway branch ${branch}, draft PR #${pr}`);
 
   await prepareRepo(sandboxId, branch);
-  await applyAgentPolicy(sandboxId, { pr });
+  await applyAgentPolicy(sandboxId, 'implement', { pr });
   const start = await head();
   const push = await sh(sbx, `mkdir -p docs && echo ok > docs/check.md && git add -A && git commit -qm "check: push" && git push -q origin HEAD:refs/heads/${branch} 2>&1`);
   r.check('push to its branch', push.code === 0 && (await head()) !== start, push.out);
@@ -60,14 +60,14 @@ try {
   r.check('no Dev token in the sandbox', await secretsAbsent(sbx, [await mintDevToken()]));
 
   await sh(sbx, 'echo leftover > docs/leftover.md');
-  const fin = await finishDevBranch(sandboxId, { pr }, 'check: leftovers');
+  const fin = await finishDevBranch(sandboxId, 'implement', { pr }, 'check: leftovers');
   r.check('finish step commits and pushes leftovers', fin.committedLeftovers && (await head()) === fin.headSha, fin.headSha.slice(0, 7));
   const paths = await prChangedPaths(pr);
   r.check('PR paths visible to the protected-path check, no workflow file', paths.includes('docs/leftover.md') && !paths.some((p) => p.startsWith('.github/')), paths.join(', '));
 } catch (e) {
   r.fail('dev', e);
 } finally {
-  await destroyIssueSandbox(issue);
+  await deleteCheckSandbox(issue);
   if (pr) await o.rest.pulls.update({ owner, repo, pull_number: pr, state: 'closed' }).catch(() => {});
   await o.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` }).catch(() => {});
   r.info(`cleaned up PR #${pr ?? '-'} and ${branch}`);

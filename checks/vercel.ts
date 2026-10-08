@@ -1,9 +1,9 @@
 // The vercel-debug allowlist, applied exactly as the agent gets it: allowed endpoints, blocked ones, the protected
 // preview and production hosts, and no Vercel secret in the sandbox. Usage: pnpm check vercel <branch-with-a-preview>
 import { config } from '../lib/config';
-import { applyAgentPolicy, destroyIssueSandbox, ensureSandbox, native, prepareRepo } from '../lib/sandbox';
+import { applyAgentPolicy, ensureSandbox, native, prepareRepo } from '../lib/sandbox';
 import { vercelContext, vercelEnabled } from '../lib/vercel';
-import { httpStatus, report, secretsAbsent, sh } from './_lib';
+import { deleteCheckSandbox, httpStatus, report, secretsAbsent, sh } from './_lib';
 
 const branch = process.argv[2];
 const r = report(`vercel-debug access for ${branch}`);
@@ -17,7 +17,7 @@ const sandboxId = await ensureSandbox(issue);
 const sbx = await native(sandboxId);
 try {
   await prepareRepo(sandboxId, branch);
-  await applyAgentPolicy(sandboxId);
+  await applyAgentPolicy(sandboxId, 'spec');
   const env = await sh(sbx, 'cat .factory/vercel.env');
   const preview = /PREVIEW_URL=(\S+)/.exec(env.out)?.[1];
   const production = /PRODUCTION_URL=(\S+)/.exec(env.out)?.[1];
@@ -49,6 +49,6 @@ try {
 } catch (e) {
   r.fail('vercel', e);
 } finally {
-  await destroyIssueSandbox(issue);
+  await deleteCheckSandbox(issue);
 }
 r.done();

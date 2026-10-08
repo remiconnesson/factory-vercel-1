@@ -85,5 +85,17 @@ compute). It's deleted when the PR is merged. A PR closed without merging keeps 
 **Decision:** Review returns a verdict. "Changes requested" adds `factory:changes-requested`, which starts a revision
 run of Dev on the issue's sandbox with the latest review in its prompt (`factory/stations/revise.md`). Dev's PR goes
 back to draft for the revision, so its pushes don't trigger Review, and is marked ready again after verify, which
-starts the next review. After `maxReviewRounds` reviews, the factory stops and a human decides; an allowed user can
+starts the next review. After three reviews (`core/rules/orchestrator.cedar`), the factory stops and a human decides; an allowed user can
 always apply the label to send the PR back.
+
+## Business rules in Cedar, enforced with proofs
+
+The rules were spread over the code: an allow-list check in the webhook, protected and allowed paths in the commit
+code, a round counter in the review workflow, and the firewall code deciding who gets push access. Nothing stopped a
+new call site from skipping a check. **Decision:** the rules are Cedar policies (`core/rules/`), asked by a pure core
+(`core/`); proofs of their answers can be made only in `proofs/` (gdp-ts), and each function that acts on GitHub,
+Vercel or a sandbox demands the proof about the exact value it acts on. Cedar rather than TypeScript predicates: the
+rules read as rules, are validated against a schema at build time, and name themselves when they refuse something.
+**Cost:** a wasm dependency that must stay out of workflow bundles, a `name(...)` scope at each decision point, and
+facts (like a PR's changed paths) fetched by the proof modules rather than passed in, so the shell can't hand them
+stale ones.

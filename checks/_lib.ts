@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import type { Sandbox } from '@vercel/sandbox';
+import { Sandbox } from '@vercel/sandbox';
+import { issueSandboxName } from '../lib/sandbox';
 
 /** A check's output: one PASS/FAIL line per assertion, a summary, and a non-zero exit code on failure. */
 export function report(title: string) {
@@ -52,4 +53,14 @@ export const why = (out: string) => out.split('\n').find((l) => /rule|declined|d
 export function gh(args: string[], json = false) {
   const out = execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   return json ? JSON.parse(out || 'null') : out;
+}
+
+/**
+ * Deletes a check's throwaway sandbox. Operator tooling: the factory itself deletes a sandbox only with the rules'
+ * SandboxDeletable proof (its PR was merged).
+ */
+export async function deleteCheckSandbox(issue: number) {
+  const sbx = await Sandbox.get({ name: issueSandboxName(issue) }).catch(() => undefined);
+  await sbx?.delete({ deleteOrphanSnapshots: true });
+  return Boolean(sbx);
 }

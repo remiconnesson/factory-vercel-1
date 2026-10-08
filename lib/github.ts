@@ -1,6 +1,10 @@
 import { connectGithubToken } from '@github-tools/sdk/connect';
 import { createOctokit, resolveGithubToken } from '@github-tools/sdk';
+import type { Named } from '@gdp-ts/core';
+import type { MaySendBack } from '@/proofs/may-send-back';
+import type { PrMayBeReady } from '@/proofs/pr-may-be-ready';
 import { config, repoFull } from './config';
+import type { IssueNumber, PrNumber } from './ids';
 
 // Every token is narrowed to ONE repo and to explicit GitHub App permissions. Connect applies `permissions` in the
 // authorization details (format `name:level`); it ignores `scopes` for GitHub App tokens, which then carry the app's
@@ -75,6 +79,7 @@ export async function getIssue(issue: number) {
 
 export type StationResult = { summary?: string; deviationsFromSpec?: string[]; openQuestions?: string[] };
 
+/** Opens the factory PR or updates its description. Marking it ready is markPrReady's job. */
 export async function upsertPr(station: 'spec' | 'implement', issue: number, branch: string, title: string, result: StationResult, verify?: { ok: boolean }) {
   const o = await gh();
   const { owner, repo } = config;
@@ -95,10 +100,29 @@ export async function upsertPr(station: 'spec' | 'implement', issue: number, bra
   } else {
     await o.rest.pulls.update({ owner, repo, pull_number: pr.number, body });
   }
-  if (station === 'implement' && verify?.ok && pr.draft) {
-    await o.graphql(`mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`, { id: pr.node_id });
-  }
   return pr.number;
+}
+
+/** Marks Dev's PR ready for review, which starts Review. Demands the rules' say-so. */
+export async function markPrReady<S, P>(pr: Named<P, PrNumber>, _proof: PrMayBeReady<S, P>) {
+  const o = await gh();
+  const { data } = await o.rest.pulls.get({ owner: config.owner, repo: config.repo, pull_number: pr.value });
+  if (!data.draft) return;
+  await o.graphql(`mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`, { id: data.node_id });
+}
+
+/** Sends the PR back to Dev: the label starts a revision on the issue's sandbox. Demands the rules' say-so. */
+export async function sendBackToDev<P>(issue: IssueNumber, _pr: Named<P, PrNumber>, _proof: MaySendBack<P>) {
+  await setLabels(issue, [config.labels.changesRequested]);
+}
+
+/** The issue's factory PR, open or closed, or null if there is none. */
+export async function factoryPrState(issue: number) {
+  const o = await gh();
+  const { owner, repo } = config;
+  const { data } = await o.rest.pulls.list({ owner, repo, head: `${owner}:${config.branch(issue)}`, state: 'all', per_page: 1 });
+  const pr = data[0];
+  return pr ? { number: pr.number, merged: Boolean(pr.merged_at), fromFork: pr.head.repo?.full_name !== repoFull } : null;
 }
 
 /** Before Dev runs: its PR exists and is a draft, so its pushes don't start Review mid-run. */

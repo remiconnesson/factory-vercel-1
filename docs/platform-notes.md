@@ -67,6 +67,17 @@ says what to do about it. `pnpm check <name>` re-verifies the ones marked with a
   top-level import of `@vercel/sandbox`, Connect or Octokit makes every run fail with `require is not defined`; the
   build only prints a "Serde warning". See `workflows/steps.ts`.
 
+## Cedar (`@cedar-policy/cedar-wasm`)
+
+- **A policy scope names one principal or resource; only `action` takes a list.** `principal in [A, B]` in the scope
+  fails to parse ("expected single entity uid or template slot, found set of entity uids"); put it in `when`.
+- **Policy ids come from the policy set, not from `@id`.** `isAuthorized` reports the ids of the policies that
+  decided, so `scripts/bundle.mjs` passes the policies as a map keyed by their `@id` annotation.
+- **A deny with no matching permit has no reason.** Only a matching `forbid` names itself; explaining a missing permit
+  is up to the caller (see `lib/handlers.ts`).
+- **Use the `nodejs` build and keep it external** (`serverExternalPackages` in `next.config.ts`), so Next.js traces
+  the `.wasm` file into the functions that need it instead of bundling it. Never import it from a workflow file.
+
 ## GitHub
 
 - **Rulesets and branch protection on private repos need GitHub Pro, Team or Enterprise.** Free accounts and free

@@ -3,8 +3,7 @@
 // requests changes (unless Review already did) and follows Dev's revision to the second review.
 // Usage: pnpm check e2e [--approve-spec] [--revise] [--follow <issue>] [--cleanup <issue>] [--repo owner/name]
 import { config, repoFull } from '../lib/config';
-import { destroyIssueSandbox } from '../lib/sandbox';
-import { gh, report } from './_lib';
+import { deleteCheckSandbox, gh, report } from './_lib';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -16,7 +15,7 @@ async function cleanup(issue: number) {
   for (const { number } of prs) gh(['pr', 'close', String(number), '-R', repo, '--delete-branch', '--comment', 'Closing: end-to-end check.']);
   gh(['issue', 'close', String(issue), '-R', repo, '--comment', 'Closing: end-to-end check.']);
   // Closing without merging keeps the issue's sandbox (it could be reopened); a check doesn't need it.
-  const deleted = repo === repoFull && (await destroyIssueSandbox(issue));
+  const deleted = repo === repoFull && (await deleteCheckSandbox(issue));
   console.log(`closed #${issue}${prs.length ? ` and PR ${prs.map((p) => `#${p.number}`).join(', ')}, with its branch` : ''}${deleted ? ', deleted its sandbox' : ''}`);
 }
 

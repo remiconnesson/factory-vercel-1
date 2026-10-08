@@ -1,4 +1,5 @@
 import type { NetworkPolicyRule } from '@vercel/sandbox';
+import type { StationMayReadVercel } from '@/proofs/station-may-read-vercel';
 import { config } from './config';
 
 // Read-only Vercel access for sandbox agents (factory/skills/vercel-debug). FACTORY_VERCEL_TOKEN is a project-scoped
@@ -57,8 +58,11 @@ const readOnlyPaths = (projectId: string) => [
   `^/v1/projects/${projectId}/deployments/[^/]+/runtime-logs$`, // runtime logs (live tail)
 ];
 
-/** Firewall rules to add to the agent's lockdown policy. Rules apply in order; the last one answers everything else. */
-export function vercelRules(ctx: VercelContext): Record<string, NetworkPolicyRule[]> {
+/**
+ * Firewall rules to add to the agent's lockdown policy. Rules apply in order; the last one answers everything else.
+ * Demands proof that the rules let this station read Vercel.
+ */
+export function vercelRules<S>(ctx: VercelContext, _proof: StationMayReadVercel<S>): Record<string, NetworkPolicyRule[]> {
   const auth = [{ headers: { Authorization: `Bearer ${token()}` } }];
   const rules: Record<string, NetworkPolicyRule[]> = {
     'api.vercel.com': [
