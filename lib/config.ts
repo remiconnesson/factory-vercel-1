@@ -13,7 +13,10 @@ export const config = {
     readyToImplement: 'ready-to-implement',
     running: 'factory:running',
     blocked: 'factory:blocked',
+    changesRequested: 'factory:changes-requested', // Review (or a human) sends the PR back to Dev
   },
+  // Review ↔ Dev rounds before the factory hands the PR to a human.
+  maxReviewRounds: 3,
   branch: (issue: number) => `factory/issue-${issue}`,
   // never committed, whatever the agent does
   protectedPaths: [/^\.github\//, /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|composer\.lock)$/],

@@ -43,6 +43,12 @@ says what to do about it. `pnpm check <name>` re-verifies the ones marked with a
 - **Pushes can't be filtered by the firewall:** it sees the git endpoint, not which branch a push updates. GitHub
   rulesets do that part.
 
+- **Sandboxes are persistent by default.** `stop()` snapshots the filesystem; the next `Sandbox.get({ name, resume:
+  true })` (or any command) resumes it. Resuming a missing sandbox fails with 404, and one whose snapshot expired with
+  410 `snapshot_not_found`: delete it and create a new one (`ensureSandbox` in `lib/sandbox.ts`). Use
+  `keepLastSnapshots` to keep one snapshot per sandbox instead of one per stop, and `delete({ deleteOrphanSnapshots:
+  true })` to remove the snapshots with the sandbox.
+
 ## AI SDK harness (fx)
 
 - **The harness refuses to start a session if the sandbox policy holds credential-injecting rules it didn't add.**

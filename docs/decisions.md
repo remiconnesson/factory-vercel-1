@@ -71,3 +71,19 @@ target's env vars only.
 Free GitHub plans allow rulesets on public repos only, and the push model depends on rulesets. **Decision:** both
 repos are public, after a scan of the factory's full history for secrets. A private target needs GitHub Pro, Team or
 Enterprise.
+
+## One sandbox per issue, deleted on merge
+
+Review and Dev need to go back and forth on a PR, and re-cloning and re-installing for every round wastes minutes.
+**Decision:** each issue gets a sandbox named after the repo and issue. Every run resumes it, resets the checkout to
+what's on GitHub, and stops it at the end (stopping snapshots the filesystem, so an idle sandbox costs storage, not
+compute). It's deleted when the PR is merged. A PR closed without merging keeps its sandbox until the snapshot expires
+(30 days), after which the next run starts fresh. **Cost:** one stored snapshot per open issue.
+
+## Review sends the PR back to Dev
+
+**Decision:** Review returns a verdict. "Changes requested" adds `factory:changes-requested`, which starts a revision
+run of Dev on the issue's sandbox with the latest review in its prompt (`factory/stations/revise.md`). Dev's PR goes
+back to draft for the revision, so its pushes don't trigger Review, and is marked ready again after verify, which
+starts the next review. After `maxReviewRounds` reviews, the factory stops and a human decides; an allowed user can
+always apply the label to send the PR back.

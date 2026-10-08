@@ -34,6 +34,16 @@ export async function prepareDevPr(issue: number, branch: string, title: string)
   return (await import('@/lib/github')).prepareDevPr(issue, branch, title);
 }
 
+export async function botReviewCount(pr: number) {
+  'use step';
+  return (await import('@/lib/github')).botReviewCount(pr);
+}
+
+export async function latestReview(pr: number) {
+  'use step';
+  return (await import('@/lib/github')).latestReview(pr);
+}
+
 export async function prChangedPaths(pr: number) {
   'use step';
   return (await import('@/lib/github')).prChangedPaths(pr);
@@ -63,9 +73,19 @@ export async function postReview(pr: number, headSha: string, review: Review) {
 
 // Sandbox stations (HarnessAgent + fx in a Vercel Sandbox)
 
-export async function createRunSandbox(runId: string) {
+export async function ensureSandbox(issue: number) {
   'use step';
-  return (await import('@/lib/sandbox')).createRunSandbox(runId);
+  return (await import('@/lib/sandbox')).ensureSandbox(issue);
+}
+
+export async function stopSandbox(sandboxId: string) {
+  'use step';
+  await (await import('@/lib/sandbox')).stopSandbox(sandboxId);
+}
+
+export async function destroyIssueSandbox(issue: number) {
+  'use step';
+  return (await import('@/lib/sandbox')).destroyIssueSandbox(issue);
 }
 
 export async function prepareRepo(sandboxId: string, branch: string) {
@@ -98,7 +118,3 @@ export async function readChanges(sandboxId: string) {
   return (await import('@/lib/sandbox')).readChanges(sandboxId);
 }
 
-export async function destroySandbox(sandboxId: string) {
-  'use step';
-  await (await import('@/lib/sandbox')).destroySandbox(sandboxId);
-}

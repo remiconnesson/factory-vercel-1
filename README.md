@@ -8,9 +8,15 @@ AI Gateway, Vercel Connect, the AI SDK fx harness, libfx and GitHub Tools.
 | issue opened         | Triage    | Checks the issue, flags questions                               | `ready-to-spec` or `needs-info`     |
 | `ready-to-spec`      | Spec      | Writes `specs/<n>/PRODUCT.md` and `TECH.md`, opens a draft PR   | a human applies `ready-to-implement` |
 | `ready-to-implement` | Implement | Implements the specs, runs the verification, marks the PR ready | the PR event triggers Review        |
-| PR ready / updated   | Review    | Reviews the diff against the specs                              | posts review comments               |
+| PR ready / updated   | Review    | Reviews the diff against the specs, gives a verdict             | `factory:changes-requested` or done |
+| `factory:changes-requested` | Implement (revision) | Addresses the latest review, pushes, re-verifies       | marks the PR ready → Review again   |
 
-A human merges.
+Review and Dev go back and forth up to 3 rounds (`maxReviewRounds`), then a human takes over. A human merges; an
+allowed user can also send a PR back to Dev by applying `factory:changes-requested`.
+
+Each issue has one sandbox for its whole life: Spec creates it, Implement and every revision reuse it (checkout and
+dependencies included), each run ends by stopping it, which snapshots its filesystem, and it's deleted when the PR is
+merged.
 
 Only `FACTORY_ALLOWED_USERS` can start the loop: issues opened by anyone else are ignored, `ready-to-implement`
 must come from an allowed user, the factory's bot may only continue a chain an allowed user started, and PRs from
@@ -43,7 +49,7 @@ factory/stations/*.md             # one prompt template per station (bundled at 
 factory/skills/*/SKILL.md         # skills for the sandbox agents: vercel-debug, github-dev
 lib/                              # host-only code: GitHub, Connect tokens, libfx, harness, sandbox, commit
 workflows/steps.ts                # the step boundary: lazy-loads lib/ inside "use step" bodies
-workflows/{triage,coding-station,review}.ts
+workflows/{triage,coding-station,review,cleanup}.ts
 scripts/verify                    # definition of done for Implement (the orchestrator re-runs it)
 ```
 
@@ -78,7 +84,8 @@ The factory works on one target repo and its Vercel project, never on itself.
    executable `scripts/verify` (lint, type-check, tests), dependencies from the public npm registry only (the sandbox
    can't reach anything else), and an `AGENTS.md` with its conventions.
 2. **GitHub App:** add the repo to the connector's GitHub App installation (repository access).
-3. **Labels:** `ready-to-spec`, `needs-info`, `ready-to-implement`, `factory:running`, `factory:blocked`.
+3. **Labels:** `ready-to-spec`, `needs-info`, `ready-to-implement`, `factory:running`, `factory:blocked`,
+   `factory:changes-requested`.
 4. **Webhook:** `https://<factory>/api/github/webhook`, `application/json`, Issues and Pull requests events, secret
    `GITHUB_WEBHOOK_SECRET`.
 5. **Rulesets** (admin role may bypass):

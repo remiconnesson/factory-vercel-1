@@ -3,12 +3,13 @@
 import { repoFull } from '../lib/config';
 import { gatewayKey } from '../lib/ai-gateway';
 import { mintReadToken } from '../lib/github';
-import { createRunSandbox, destroySandbox, lockdownPolicy, native, prepareRepo, readChanges, readResult, runAgentSlice, runVerify } from '../lib/sandbox';
+import { destroyIssueSandbox, ensureSandbox, lockdownPolicy, native, prepareRepo, readChanges, readResult, runAgentSlice, runVerify, stopSandbox } from '../lib/sandbox';
 import { httpStatus, report, secretsAbsent, sh } from './_lib';
 
 const r = report(`sandbox stations on ${repoFull}`);
-const runId = `check-sandbox-${Date.now()}`;
-const sandboxId = await createRunSandbox(runId);
+const issue = 80000 + Math.floor(Math.random() * 9999); // a throwaway issue number: its sandbox is deleted at the end
+const runId = `check-sandbox-${issue}`;
+const sandboxId = await ensureSandbox(issue);
 const sbx = await native(sandboxId);
 const completion = `https://ai-gateway.vercel.sh/v1/chat/completions`;
 const completionBody = JSON.stringify({ model: 'anthropic/claude-haiku-4.5', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] });
@@ -48,9 +49,18 @@ try {
   r.check('changes read back (and .factory/ excluded)', changes.some((c) => c.path === 'check.txt') && !changes.some((c) => c.path.startsWith('.factory/')), changes.map((c) => c.path).join(', '));
   const verify = await runVerify(sandboxId, './scripts/verify');
   r.check('./scripts/verify passes under lockdown, in the agent environment', verify.ok, verify.ok ? '' : verify.output.slice(-300));
+
+  // The next run on the same issue resumes the stopped sandbox: same checkout and dependencies, leftovers dropped.
+  await sh(sbx, 'touch .git/factory-check-marker');
+  await stopSandbox(sandboxId);
+  r.check('the next run resumes the same sandbox by name', (await ensureSandbox(issue)) === sandboxId);
+  await prepareRepo(sandboxId, `factory/check-${issue}-again`);
+  const reused = await sh(await native(sandboxId), 'test -f .git/factory-check-marker && test -d node_modules && echo reused; test -e check.txt && echo leftover || echo clean');
+  r.check('checkout and dependencies kept across the stop', reused.out.includes('reused'), reused.out);
+  r.check('uncommitted leftovers of the previous run dropped', reused.out.includes('clean'), reused.out);
 } catch (e) {
   r.fail('sandbox', e);
 } finally {
-  await destroySandbox(sandboxId);
+  await destroyIssueSandbox(issue);
 }
 r.done();

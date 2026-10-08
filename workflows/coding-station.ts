@@ -1,25 +1,31 @@
 import { renderStation } from '@/lib/stations';
 import { config, repoFull } from '@/lib/config';
 import {
-  comment, commitChanges, createRunSandbox, destroySandbox, finishDevBranch, getIssue, prChangedPaths, prepareDevPr,
-  prepareRepo, readChanges, readResult, runAgentSlice, runVerify, setLabels, upsertPr,
+  comment, commitChanges, ensureSandbox, finishDevBranch, getIssue, latestReview, prChangedPaths, prepareDevPr,
+  prepareRepo, readChanges, readResult, runAgentSlice, runVerify, setLabels, stopSandbox, upsertPr,
 } from './steps';
 
-export async function codingStationWorkflow(input: { station: 'spec' | 'implement'; issue: number; runId: string }) {
+/**
+ * Spec, Implement, or a revision of Implement after review (`revision`). All runs on an issue share its sandbox,
+ * which is stopped (not deleted) at the end of each run and deleted when the PR is merged (workflows/cleanup.ts).
+ */
+export async function codingStationWorkflow(input: { station: 'spec' | 'implement'; issue: number; runId: string; revision?: boolean }) {
   'use workflow';
-  const { station: name, issue, runId } = input;
+  const { station: name, issue, runId, revision } = input;
   const branch = config.branch(issue);
   const issueData = await getIssue(issue);
   if (issueData.labels.includes(config.labels.running)) return; // another run is in progress
-  await setLabels(issue, [config.labels.running], [config.labels.blocked]);
+  await setLabels(issue, [config.labels.running], [config.labels.blocked, config.labels.changesRequested]);
 
-  const sandboxId = await createRunSandbox(runId);
+  let sandboxId: string | undefined;
   try {
+    sandboxId = await ensureSandbox(issue);
     const { baseSha } = await prepareRepo(sandboxId, branch);
     // Dev pushes its branch itself, so its PR must exist (as a draft: pushes to a draft don't start Review).
     const dev = name === 'implement' ? { pr: await prepareDevPr(issue, branch, issueData.title) } : undefined;
-    const station = renderStation(name, {
-      repoFull, issue, branch, pr: dev?.pr ?? '', issueTitle: issueData.title, issueBody: issueData.body,
+    const review = revision && dev ? await latestReview(dev.pr) : '';
+    const station = renderStation(revision ? 'revise' : name, {
+      repoFull, issue, branch, pr: dev?.pr ?? '', review, issueTitle: issueData.title, issueBody: issueData.body,
     });
 
     let prompt = station.prompt;
@@ -70,7 +76,7 @@ export async function codingStationWorkflow(input: { station: 'spec' | 'implemen
       await setLabels(issue, [config.labels.blocked]);
     }
   } finally {
-    await destroySandbox(sandboxId);
+    if (sandboxId) await stopSandbox(sandboxId);
     await setLabels(issue, [], [config.labels.running]);
   }
 }

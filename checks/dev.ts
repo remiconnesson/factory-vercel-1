@@ -3,7 +3,7 @@
 import { createOctokit, resolveGithubToken } from '@github-tools/sdk';
 import { config, repoFull } from '../lib/config';
 import { mintDevToken, prChangedPaths, prepareDevPr, writeToken } from '../lib/github';
-import { applyAgentPolicy, createRunSandbox, destroySandbox, finishDevBranch, native, prepareRepo } from '../lib/sandbox';
+import { applyAgentPolicy, destroyIssueSandbox, ensureSandbox, finishDevBranch, native, prepareRepo } from '../lib/sandbox';
 import { httpStatus, report, secretsAbsent, sh, why } from './_lib';
 
 const r = report(`Dev access on ${repoFull}`);
@@ -13,7 +13,7 @@ const branch = config.branch(issue);
 const o = createOctokit(await resolveGithubToken(writeToken));
 const head = async () => (await o.rest.git.getRef({ owner, repo, ref: `heads/${branch}` })).data.object.sha;
 let pr: number | undefined;
-const sandboxId = await createRunSandbox(`check-dev-${issue}`);
+const sandboxId = await ensureSandbox(issue);
 const sbx = await native(sandboxId);
 try {
   // A branch with one commit, as Spec leaves it, and Dev's draft PR.
@@ -67,7 +67,7 @@ try {
 } catch (e) {
   r.fail('dev', e);
 } finally {
-  await destroySandbox(sandboxId);
+  await destroyIssueSandbox(issue);
   if (pr) await o.rest.pulls.update({ owner, repo, pull_number: pr, state: 'closed' }).catch(() => {});
   await o.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` }).catch(() => {});
   r.info(`cleaned up PR #${pr ?? '-'} and ${branch}`);

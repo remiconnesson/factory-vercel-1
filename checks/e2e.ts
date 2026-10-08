@@ -1,7 +1,9 @@
 // Opens a test issue on the target and follows it through every station, printing each change. The human
-// checkpoint (`ready-to-implement`) is applied only with --approve-spec.
-// Usage: pnpm check e2e [--approve-spec] [--follow <issue>] [--cleanup <issue>] [--repo owner/name]
+// checkpoint (`ready-to-implement`) is applied only with --approve-spec. With --revise, after the first review it
+// requests changes (unless Review already did) and follows Dev's revision to the second review.
+// Usage: pnpm check e2e [--approve-spec] [--revise] [--follow <issue>] [--cleanup <issue>] [--repo owner/name]
 import { config, repoFull } from '../lib/config';
+import { destroyIssueSandbox } from '../lib/sandbox';
 import { gh, report } from './_lib';
 
 const args = process.argv.slice(2);
@@ -9,16 +11,18 @@ const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 
 const repo = flag('--repo') ?? repoFull;
 const { labels } = config;
 
-function cleanup(issue: number) {
+async function cleanup(issue: number) {
   const prs: { number: number }[] = gh(['pr', 'list', '-R', repo, '--state', 'open', '--head', `factory/issue-${issue}`, '--json', 'number'], true);
   for (const { number } of prs) gh(['pr', 'close', String(number), '-R', repo, '--delete-branch', '--comment', 'Closing: end-to-end check.']);
   gh(['issue', 'close', String(issue), '-R', repo, '--comment', 'Closing: end-to-end check.']);
-  console.log(`closed #${issue}${prs.length ? ` and PR ${prs.map((p) => `#${p.number}`).join(', ')}, with its branch` : ''}`);
+  // Closing without merging keeps the issue's sandbox (it could be reopened); a check doesn't need it.
+  const deleted = repo === repoFull && (await destroyIssueSandbox(issue));
+  console.log(`closed #${issue}${prs.length ? ` and PR ${prs.map((p) => `#${p.number}`).join(', ')}, with its branch` : ''}${deleted ? ', deleted its sandbox' : ''}`);
 }
 
 const cleanupIssue = flag('--cleanup');
 if (cleanupIssue) {
-  cleanup(Number(cleanupIssue));
+  await cleanup(Number(cleanupIssue));
   process.exit();
 }
 
@@ -40,9 +44,12 @@ function state(): State {
   return { labels: i.labels.map((l: { name: string }) => l.name), comments: i.comments.length, pr, reviews: Number(reviews) };
 }
 
-const deadline = Date.now() + 40 * 60_000;
+const deadline = Date.now() + 60 * 60_000;
+const revise = args.includes('--revise');
 let last = '';
 let approved = false;
+let revisionAsked = false;
+let commitsAtFirstReview = 0;
 let s = state();
 while (Date.now() < deadline) {
   const line = `labels=[${s.labels.join(', ')}] comments=${s.comments} pr=${s.pr ? `#${s.pr.number}${s.pr.isDraft ? ' draft' : ' ready'} commits=${s.pr.commits}` : '-'} reviews=${s.reviews}`;
@@ -51,7 +58,20 @@ while (Date.now() < deadline) {
   const running = s.labels.includes(labels.running);
   if (s.labels.includes(labels.blocked) && !running) break;
   if (s.labels.includes(labels.needsInfo) && !running) break;
-  if (s.reviews > 0) break;
+  if (s.reviews > 0 && !revise) break;
+  if (revise && s.reviews >= 2 && !running) break;
+  if (revise && s.reviews === 1 && !revisionAsked && !running) {
+    commitsAtFirstReview = s.pr?.commits ?? 0;
+    if (!s.labels.includes(labels.changesRequested)) {
+      await new Promise((res) => setTimeout(res, 15_000)); // give Review's own label a moment
+      s = state();
+      if (!s.labels.includes(labels.changesRequested) && !s.labels.includes(labels.running)) {
+        gh(['issue', 'edit', String(issue), '-R', repo, '--add-label', labels.changesRequested]);
+        r.info(`Review found nothing blocking; applied ${labels.changesRequested} to exercise the revision`);
+      }
+    } else r.info('Review requested changes itself');
+    revisionAsked = true;
+  }
   const specDone = s.pr?.isDraft && !running && !s.labels.includes(labels.readyToImplement);
   if (specDone && !approved) {
     if (!args.includes('--approve-spec')) {
@@ -72,6 +92,10 @@ if (approved || s.labels.includes(labels.readyToImplement)) {
   r.check('implementation pushed (PR has more than the spec commit)', (s.pr?.commits ?? 0) > 1);
   r.check('PR marked ready', s.pr?.isDraft === false);
   r.check('review posted', s.reviews > 0);
+  if (revise) {
+    r.check('revision pushed more commits', (s.pr?.commits ?? 0) > commitsAtFirstReview, `${commitsAtFirstReview} → ${s.pr?.commits}`);
+    r.check('second review posted', s.reviews >= 2);
+  }
 }
 r.check('not blocked', !s.labels.includes(labels.blocked));
 r.info(`done. Clean up with: pnpm check e2e --cleanup ${issue}${repo === repoFull ? '' : ` --repo ${repo}`}`);

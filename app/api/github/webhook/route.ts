@@ -4,6 +4,7 @@ import { config, repoFull } from '@/lib/config';
 import { triageWorkflow } from '@/workflows/triage';
 import { codingStationWorkflow } from '@/workflows/coding-station';
 import { reviewWorkflow } from '@/workflows/review';
+import { cleanupWorkflow } from '@/workflows/cleanup';
 
 function validSignature(body: string, signature: string | null) {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -44,12 +45,27 @@ export async function POST(req: Request) {
       await start(codingStationWorkflow, [{ station: 'spec', issue: p.issue.number, runId: `spec-${p.issue.number}-${delivery}` }]);
       return started('spec');
     }
+    // Review asked for changes (the bot, on an issue an allowed user opened), or an allowed user sends it back.
+    if (label === config.labels.changesRequested) {
+      if (!isAllowed(sender) && !(isBot(sender) && isAllowed(p.issue.user))) return ignored(`${label} by ${sender?.login}`);
+      await start(codingStationWorkflow, [{ station: 'implement', issue: p.issue.number, runId: `rev-${p.issue.number}-${delivery}`, revision: true }]);
+      return started('revision');
+    }
     // Human checkpoint: only an allowed user may release implementation, never a bot (including ours).
     if (label === config.labels.readyToImplement) {
       if (!isAllowed(sender)) return ignored(`${label} by ${sender?.login}`);
       await start(codingStationWorkflow, [{ station: 'implement', issue: p.issue.number, runId: `impl-${p.issue.number}-${delivery}` }]);
       return started('implement');
     }
+  }
+
+  // A merged factory PR: delete the issue's sandbox. Only someone with write access can merge, so any sender counts.
+  if (event === 'pull_request' && p.action === 'closed') {
+    const pr = p.pull_request;
+    const match = /^factory\/issue-(\d+)$/.exec(pr.head.ref);
+    if (!match || !pr.merged || pr.head.repo?.full_name !== repoFull) return ignored('not a merged factory PR');
+    await start(cleanupWorkflow, [{ issue: Number(match[1]) }]);
+    return started('cleanup');
   }
 
   if (event === 'pull_request' && ['ready_for_review', 'synchronize'].includes(p.action)) {

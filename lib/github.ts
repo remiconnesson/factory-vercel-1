@@ -122,3 +122,25 @@ export async function prChangedPaths(pr: number) {
   const files = await o.paginate(o.rest.pulls.listFiles, { owner: config.owner, repo: config.repo, pull_number: pr, per_page: 100 });
   return files.flatMap((f) => [f.filename, ...(f.previous_filename ? [f.previous_filename] : [])]);
 }
+
+/** Reviews posted by the factory (a GitHub App) on the PR: the Review ↔ Dev round count. */
+export async function botReviewCount(pr: number) {
+  const o = await gh();
+  const reviews = await o.paginate(o.rest.pulls.listReviews, { owner: config.owner, repo: config.repo, pull_number: pr, per_page: 100 });
+  return reviews.filter((r) => r.user?.type === 'Bot').length;
+}
+
+/** The latest review on the PR (the factory's or a human's) with its inline comments, as text for Dev's prompt. */
+export async function latestReview(pr: number) {
+  const o = await gh();
+  const { owner, repo } = config;
+  const reviews = await o.paginate(o.rest.pulls.listReviews, { owner, repo, pull_number: pr, per_page: 100 });
+  const last = reviews.filter((r) => r.body || r.state === 'CHANGES_REQUESTED').at(-1);
+  if (!last) return '';
+  const comments = await o.paginate(o.rest.pulls.listCommentsForReview, { owner, repo, pull_number: pr, review_id: last.id, per_page: 100 });
+  return [
+    `Review by ${last.user?.login ?? 'unknown'} (${last.state}):`,
+    last.body ?? '',
+    ...comments.map((c) => `- ${c.path}:${c.line ?? c.original_line ?? '?'}: ${c.body}`),
+  ].join('\n');
+}

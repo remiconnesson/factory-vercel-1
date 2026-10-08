@@ -7,8 +7,9 @@ import { githubDevRules, githubEnvFile } from './github-access';
 import { gatewayKey } from './ai-gateway';
 import { vercelContext, vercelEnabled, vercelEnvFile, vercelRules } from './vercel';
 
-const SANDBOX_TIMEOUT_MS = 2 * 60 * 60_000; // the default is 5 minutes
+const SANDBOX_TIMEOUT_MS = 2 * 60 * 60_000; // per session (the default is 5 minutes); a stopped sandbox resumes on use
 const SANDBOX_VCPUS = 4;
+const SNAPSHOT_RETENTION_MS = 30 * 24 * 60 * 60_000; // a sandbox idle for longer than this is rebuilt on next use
 
 // Brokered: the key is added to outbound requests by the firewall and never exists in the sandbox.
 const gatewayRule = (key: string) => ({
@@ -60,16 +61,51 @@ async function run(sbx: Sandbox, cmd: string, args: string[], cwd = repoDir(sbx)
 }
 const sh = (sbx: Sandbox, script: string, cwd = repoDir(sbx)) => run(sbx, 'bash', ['-lc', script], cwd);
 
-export async function createRunSandbox(runId: string) {
+/**
+ * One sandbox per issue, named after the repo and issue. Spec creates it; Implement and every revision reuse it
+ * (the checkout and dependencies are already there). Runs end with stopSandbox, which snapshots the filesystem;
+ * the sandbox is deleted only when the PR is merged (destroyIssueSandbox).
+ */
+export const issueSandboxName = (issue: number) =>
+  `factory-${config.owner}-${config.repo}-issue-${issue}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+const apiStatus = (e: unknown) => (e as { response?: { status?: number } }).response?.status;
+
+export async function ensureSandbox(issue: number) {
+  const sandboxId = issueSandboxName(issue);
+  try {
+    return (await resumeVercelNetworkSandboxSession({ sandboxId })).id;
+  } catch (e) {
+    const status = apiStatus(e);
+    if (status === 410) await (await Sandbox.get({ name: sandboxId })).delete(); // snapshot expired: rebuild
+    else if (status !== 404) throw e;
+  }
   const agent = await createCodingAgent();
   const session = await createVercelNetworkSandboxSession({
-    sandboxId: `factory-${runId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+    sandboxId,
     ports: [4000], // the fx ACP bridge needs one exposed port
     template: await agent.getSandboxTemplate(),
     timeout: SANDBOX_TIMEOUT_MS,
     resources: { vcpus: SANDBOX_VCPUS },
+    keepLastSnapshots: { count: 1, expiration: SNAPSHOT_RETENTION_MS },
   });
   return session.id;
+}
+
+/** End of a run: stopping snapshots the filesystem, so the next run on this issue resumes where this one ended. */
+export async function stopSandbox(sandboxId: string) {
+  try {
+    await (await Sandbox.get({ name: sandboxId })).stop();
+  } catch (e) {
+    console.warn(`stopping ${sandboxId} failed; its session will time out instead:`, e); // never fail the run over it
+  }
+}
+
+/** The PR was merged: delete the issue's sandbox and its snapshots. */
+export async function destroyIssueSandbox(issue: number) {
+  const sbx = await Sandbox.get({ name: issueSandboxName(issue) }).catch((e) => (apiStatus(e) === 404 ? undefined : Promise.reject(e)));
+  await sbx?.delete({ deleteOrphanSnapshots: true });
+  return Boolean(sbx);
 }
 
 export async function prepareRepo(sandboxId: string, branch: string) {
@@ -78,19 +114,27 @@ export async function prepareRepo(sandboxId: string, branch: string) {
   await sbx.update({ networkPolicy: setupPolicy(key, await mintReadToken()) });
 
   const url = `https://github.com/${config.owner}/${config.repo}.git`; // no token in the URL, ever
-  // Clone the factory branch if it already exists (Implement), otherwise the default branch (Spec).
-  const clone = await sh(sbx, `git clone --depth 50 --branch ${branch} ${url} repo || git clone --depth 50 ${url} repo`, sbx.cwd);
-  if (clone.exitCode !== 0) throw new Error(`clone failed: ${clone.stderr}`);
-
-  await sh(sbx, [
-    `git checkout -B ${branch}`,
-    'git tag factory-base',
-    'echo ".factory/" >> .git/info/exclude', // the result file is never committed
-    'mkdir -p .factory',
-    // Identity for the Dev agent's own commits (the orchestrator's commits go through the API).
-    'git config user.name "Software Factory"',
-    'git config user.email "factory@users.noreply.github.com"',
-  ].join(' && '));
+  if ((await sh(sbx, 'test -d repo/.git', sbx.cwd)).exitCode !== 0) {
+    // First run on this issue: clone the factory branch if it exists (Implement), otherwise the default branch (Spec).
+    const clone = await sh(sbx, `git clone --depth 50 --branch ${branch} ${url} repo || git clone --depth 50 ${url} repo`, sbx.cwd);
+    if (clone.exitCode !== 0) throw new Error(`clone failed: ${clone.stderr}`);
+    await sh(sbx, [
+      'echo ".factory/" >> .git/info/exclude', // the result file is never committed
+      // Identity for the Dev agent's own commits (the orchestrator's commits go through the API).
+      'git config user.name "Software Factory"',
+      'git config user.email "factory@users.noreply.github.com"',
+    ].join(' && '));
+  } else {
+    // Reused sandbox: start from what's on GitHub (the branch, or the default branch before it exists), dropping
+    // anything a previous run left uncommitted. Ignored files (node_modules, .factory/) stay.
+    const sync = await sh(sbx, [
+      'git reset -q --hard && git clean -fdq',
+      `(git fetch -q --depth 50 origin refs/heads/${branch} || git fetch -q --depth 50 origin HEAD)`,
+      'git checkout -q -B tmp-factory-sync FETCH_HEAD',
+    ].join(' && '));
+    if (sync.exitCode !== 0) throw new Error(`sync failed: ${sync.stderr}`);
+  }
+  await sh(sbx, [`git checkout -q -B ${branch}`, 'git branch -q -D tmp-factory-sync 2>/dev/null || true', 'git tag -f factory-base', 'mkdir -p .factory', 'rm -f .factory/result.json'].join(' && '));
   const baseSha = (await sh(sbx, 'git rev-parse HEAD')).stdout.trim();
 
   const install = await sh(sbx, 'pnpm install --frozen-lockfile');
@@ -192,10 +236,6 @@ export async function runVerify(sandboxId: string, command: string) {
 export async function readResult(sandboxId: string) {
   const r = await sh(await native(sandboxId), 'cat .factory/result.json');
   try { return JSON.parse(r.stdout); } catch { return { summary: 'The agent did not write .factory/result.json.' }; }
-}
-
-export async function destroySandbox(sandboxId: string) {
-  await (await resumeVercelNetworkSandboxSession({ sandboxId })).destroy();
 }
 
 export type Change = { path: string; mode: string; deleted?: boolean; contentBase64?: string };
