@@ -1,4 +1,5 @@
 import type { NetworkPolicyRule } from '@vercel/sandbox';
+import { createError } from 'evlog';
 import type { StationMayReadVercel } from '@/proofs/station-may-read-vercel';
 import { config } from './config';
 
@@ -13,7 +14,9 @@ async function api<T>(path: string): Promise<T> {
   const url = new URL(path, 'https://api.vercel.com');
   url.searchParams.set('teamId', config.vercel.teamId);
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token()}` } });
-  if (!res.ok) throw new Error(`Vercel API ${res.status} on ${url.pathname}`);
+  if (!res.ok) {
+    throw createError({ message: `Vercel API ${res.status} on ${url.pathname}`, why: (await res.text()).slice(0, 500), fix: 'Check FACTORY_VERCEL_TOKEN and the project and team IDs (pnpm check vercel).' });
+  }
   return (await res.json()) as T;
 }
 

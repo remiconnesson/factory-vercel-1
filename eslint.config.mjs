@@ -24,6 +24,8 @@ const eslintConfig = defineConfig([
       }],
     },
   },
+  // Logs are structured (lib/log.ts): facts go on the current wide event with note() or warn(), never console.*.
+  { files: ["app/**/*.ts", "lib/**/*.ts", "workflows/**/*.ts", "proofs/**/*.ts", "core/**/*.ts"], rules: { "no-console": "error" } },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

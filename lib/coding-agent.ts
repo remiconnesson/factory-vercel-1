@@ -1,6 +1,7 @@
 import { HarnessAgent } from '@ai-sdk/harness/agent';
 import { createFx } from '@ai-sdk/harness-fx';
 import { isStepCount } from 'ai';
+import { createError } from 'evlog';
 import { config } from './config';
 import { gatewayKey } from './ai-gateway';
 import skills from './skills.generated.json';
@@ -26,7 +27,7 @@ export async function createCodingAgent() {
           command: 'command -v pnpm >/dev/null || sudo env "PATH=$PATH" corepack enable; pnpm --version',
           abortSignal,
         });
-        if (r.exitCode !== 0) throw new Error(`bootstrap failed: ${r.stderr}`);
+        if (r.exitCode !== 0) throw createError({ message: 'sandbox template bootstrap failed', why: r.stderr.slice(-1500), fix: 'Run the onBootstrap command in a fresh sandbox (pnpm check sandbox).' });
       },
     },
   });

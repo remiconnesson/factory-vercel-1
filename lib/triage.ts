@@ -1,8 +1,10 @@
+import { createError } from 'evlog';
 import { z } from 'zod';
 import { renderStation } from './stations';
 import { readOnlyGithubTools, runHostAgent, submitTool } from './host-agent';
 import { getIssue } from './github';
 import { repoFull } from './config';
+import { note } from './log';
 
 const Verdict = z.object({
   decision: z.enum(['ready', 'needs-info']),
@@ -21,6 +23,7 @@ export async function runTriage(issue: number) {
     submitTool('submit_triage', 'Submit the triage decision.', Verdict, (v) => (verdict = v)),
   ];
   await runHostAgent({ prompt: station.prompt, tools, model: station.model });
-  if (!verdict) throw new Error('Triage agent did not submit a verdict');
+  if (!verdict) throw createError({ message: 'Triage agent did not submit a verdict', why: 'its turn ended without calling submit_triage', fix: 'See agent.stopReason and agent.tools on this event.' });
+  note({ triage: { decision: verdict.decision, questions: verdict.questions.length, possibleDuplicates: verdict.possibleDuplicates } });
   return verdict;
 }

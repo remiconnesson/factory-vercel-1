@@ -5,6 +5,7 @@ import type { MaySendBack } from '@/proofs/may-send-back';
 import type { PrMayBeReady } from '@/proofs/pr-may-be-ready';
 import { config, repoFull } from './config';
 import type { IssueNumber, PrNumber } from './ids';
+import { excerpt, note } from './log';
 
 // Every token is narrowed to ONE repo and to explicit GitHub App permissions. Connect applies `permissions` in the
 // authorization details (format `name:level`); it ignores `scopes` for GitHub App tokens, which then carry the app's
@@ -54,6 +55,7 @@ export function sanitizeMarkdown(md: string) {
 export async function comment(issue: number, body: string) {
   const o = await gh();
   await o.rest.issues.createComment({ owner: config.owner, repo: config.repo, issue_number: issue, body: sanitizeMarkdown(body) });
+  note({ comment: excerpt(body, 500) }); // blocked reasons and handoffs end up here
 }
 
 export async function setLabels(issue: number, add: string[], remove: string[] = []) {
@@ -70,6 +72,7 @@ export async function setLabels(issue: number, add: string[], remove: string[] =
 export async function getIssue(issue: number) {
   const o = await gh();
   const { data } = await o.rest.issues.get({ owner: config.owner, repo: config.repo, issue_number: issue });
+  note({ issueState: { title: excerpt(data.title, 120), author: data.user?.login, labels: data.labels.map((l) => (typeof l === 'string' ? l : l.name)) } });
   return {
     title: data.title,
     body: data.body ?? '',
@@ -97,8 +100,10 @@ export async function upsertPr(station: 'spec' | 'implement', issue: number, bra
   if (!pr) {
     const base = (await o.rest.repos.get({ owner, repo })).data.default_branch;
     pr = (await o.rest.pulls.create({ owner, repo, head: branch, base, title: `[factory] ${title} (#${issue})`, body, draft: true })).data;
+    note({ pr: pr.number, prAction: 'created' });
   } else {
     await o.rest.pulls.update({ owner, repo, pull_number: pr.number, body });
+    note({ pr: pr.number, prAction: 'description updated' });
   }
   return pr.number;
 }
@@ -107,6 +112,7 @@ export async function upsertPr(station: 'spec' | 'implement', issue: number, bra
 export async function markPrReady<S, P>(pr: Named<P, PrNumber>, _proof: PrMayBeReady<S, P>) {
   const o = await gh();
   const { data } = await o.rest.pulls.get({ owner: config.owner, repo: config.repo, pull_number: pr.value });
+  note({ prAction: data.draft ? 'marked ready' : 'already ready' });
   if (!data.draft) return;
   await o.graphql(`mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`, { id: data.node_id });
 }
@@ -122,7 +128,9 @@ export async function factoryPrState(issue: number) {
   const { owner, repo } = config;
   const { data } = await o.rest.pulls.list({ owner, repo, head: `${owner}:${config.branch(issue)}`, state: 'all', per_page: 1 });
   const pr = data[0];
-  return pr ? { number: pr.number, merged: Boolean(pr.merged_at), fromFork: pr.head.repo?.full_name !== repoFull } : null;
+  const state = pr ? { number: pr.number, merged: Boolean(pr.merged_at), fromFork: pr.head.repo?.full_name !== repoFull } : null;
+  note({ prState: state ?? 'no factory PR' });
+  return state;
 }
 
 /** Before Dev runs: its PR exists and is a draft, so its pushes don't start Review mid-run. */
@@ -134,8 +142,12 @@ export async function prepareDevPr(issue: number, branch: string, title: string)
   if (!pr) {
     const base = (await o.rest.repos.get({ owner, repo })).data.default_branch;
     pr = (await o.rest.pulls.create({ owner, repo, head: branch, base, title: `[factory] ${title} (#${issue})`, body: `Factory PR for #${issue}.`, draft: true })).data;
+    note({ pr: pr.number, prAction: 'created as draft' });
   } else if (!pr.draft) {
     await o.graphql(`mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { clientMutationId } }`, { id: pr.node_id });
+    note({ pr: pr.number, prAction: 'converted to draft' });
+  } else {
+    note({ pr: pr.number, prAction: 'already a draft' });
   }
   return pr.number;
 }
@@ -160,8 +172,12 @@ export async function latestReview(pr: number) {
   const { owner, repo } = config;
   const reviews = await o.paginate(o.rest.pulls.listReviews, { owner, repo, pull_number: pr, per_page: 100 });
   const last = reviews.filter((r) => r.body || r.state === 'CHANGES_REQUESTED').at(-1);
-  if (!last) return '';
+  if (!last) {
+    note({ review: 'none yet' });
+    return '';
+  }
   const comments = await o.paginate(o.rest.pulls.listCommentsForReview, { owner, repo, pull_number: pr, review_id: last.id, per_page: 100 });
+  note({ review: { id: last.id, by: last.user?.login, state: last.state, inlineComments: comments.length } });
   return [
     `Review by ${last.user?.login ?? 'unknown'} (${last.state}):`,
     last.body ?? '',

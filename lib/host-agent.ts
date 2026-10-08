@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { config, repoFull } from './config';
 import { readToken } from './github';
 import { gatewayKey } from './ai-gateway';
+import { note, warn } from './log';
 
 /** Hard budget for one host-agent turn. libfx has no implicit step cap, so the host enforces one. */
 const MAX_TOOL_CALLS = 60;
@@ -81,18 +82,25 @@ export async function runHostAgent(opts: { prompt: string; tools: HostTool[]; mo
     instructions: 'You are one station of a software factory. Use only the tools provided. Be concise.',
     tools: opts.tools,
   });
+  const tools: Record<string, number> = {};
+  let calls = 0;
   try {
     const turn = agent.prompt(opts.prompt, { signal: AbortSignal.timeout(MAX_TURN_MS) });
-    let calls = 0;
     for await (const e of turn) {
       if (e.type !== 'tool_start') continue;
-      console.log('[tool]', e.name);
+      tools[e.name] = (tools[e.name] ?? 0) + 1;
       if (++calls > MAX_TOOL_CALLS) {
+        warn(`the agent passed its budget of ${MAX_TOOL_CALLS} tool calls; its turn was cancelled`);
         turn.cancel();
         break;
       }
     }
-    return await turn.result; // { stopReason, usage }
+    const result = await turn.result; // { stopReason, usage }
+    note({ agent: { model: opts.model ?? config.model, toolCalls: calls, tools, stopReason: result.stopReason, usage: result.usage } });
+    return result;
+  } catch (e) {
+    note({ agent: { model: opts.model ?? config.model, toolCalls: calls, tools } }); // how far it got
+    throw e;
   } finally {
     await agent.close();
   }

@@ -1,8 +1,10 @@
+import { createError } from 'evlog';
 import { z } from 'zod';
 import { renderStation } from './stations';
 import { readOnlyGithubTools, runHostAgent, submitTool } from './host-agent';
 import { gh, sanitizeMarkdown } from './github';
 import { config, repoFull } from './config';
+import { note } from './log';
 
 const Review = z.object({
   verdict: z.enum(['changes-requested', 'no-blocking-issues']),
@@ -19,7 +21,8 @@ export async function runReview(pr: number, headSha: string, issue: number) {
     submitTool('submit_review', 'Submit the review.', Review, (r) => (review = r)),
   ];
   await runHostAgent({ prompt: station.prompt, tools, model: station.model });
-  if (!review) throw new Error('Reviewer did not submit a review');
+  if (!review) throw createError({ message: 'Reviewer did not submit a review', why: 'its turn ended without calling submit_review', fix: 'See agent.stopReason and agent.tools on this event.' });
+  note({ review: { verdict: review.verdict, comments: review.comments.length } });
   return review;
 }
 
@@ -28,10 +31,12 @@ export async function postReview(pr: number, headSha: string, r: Review) {
   const { owner, repo } = config;
   const verdict = r.verdict === 'changes-requested' ? '**Verdict: changes requested.** The factory sends this back to Dev.' : '**Verdict: no blocking issues.**';
   const base = { owner, repo, pull_number: pr, commit_id: headSha, event: 'COMMENT' as const, body: `${verdict}\n\n${sanitizeMarkdown(r.summary)}` };
+  note({ review: { verdict: r.verdict, comments: r.comments.length } });
   try {
     await o.rest.pulls.createReview({ ...base, comments: r.comments.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT' as const, body: sanitizeMarkdown(c.body) })) });
   } catch (e) {
     if ((e as { status?: number }).status !== 422) throw e; // a comment pointed outside the diff: post the comments in the body instead
+    note({ review: { inlineCommentsRejected: true } });
     const fallback = r.comments.map((c) => `- \`${c.path}:${c.line}\`: ${sanitizeMarkdown(c.body)}`).join('\n');
     await o.rest.pulls.createReview({ ...base, body: `${base.body}\n\n${fallback}` });
   }

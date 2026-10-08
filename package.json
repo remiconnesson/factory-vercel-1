@@ -24,6 +24,7 @@
     "@vercel/oidc": "^4.0.0",
     "@vercel/sandbox": "^3.5.1",
     "ai": "7.0.128",
+    "evlog": "2.30.0",
     "gray-matter": "^4.0.3",
     "libfx": "0.0.13",
     "next": "16.3.8",

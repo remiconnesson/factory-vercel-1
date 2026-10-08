@@ -1,4 +1,5 @@
 import { Sandbox } from '@vercel/sandbox';
+import { createError } from 'evlog';
 import { createVercelNetworkSandboxSession, resumeVercelNetworkSandboxSession } from '@ai-sdk/sandbox-vercel';
 import { createCodingAgent } from './coding-agent';
 import { config } from './config';
@@ -11,6 +12,7 @@ import { mintDevToken, mintReadToken } from './github';
 import type { IssueNumber } from './ids';
 import { githubDevRules, githubEnvFile } from './github-access';
 import { gatewayKey } from './ai-gateway';
+import { excerpt, note, tail, warn } from './log';
 import { vercelContext, vercelEnabled, vercelEnvFile, vercelRules } from './vercel';
 
 const SANDBOX_TIMEOUT_MS = 2 * 60 * 60_000; // per session (the default is 5 minutes); a stopped sandbox resumes on use
@@ -79,12 +81,16 @@ const apiStatus = (e: unknown) => (e as { response?: { status?: number } }).resp
 
 export async function ensureSandbox(issue: number) {
   const sandboxId = issueSandboxName(issue);
+  note({ sandbox: sandboxId });
   try {
-    return (await resumeVercelNetworkSandboxSession({ sandboxId })).id;
+    const id = (await resumeVercelNetworkSandboxSession({ sandboxId })).id;
+    note({ sandboxState: 'resumed' });
+    return id;
   } catch (e) {
     const status = apiStatus(e);
     if (status === 410) await (await Sandbox.get({ name: sandboxId })).delete(); // snapshot expired: rebuild
     else if (status !== 404) throw e;
+    note({ sandboxState: status === 410 ? 'rebuilt: its snapshot had expired' : 'created' });
   }
   const agent = await createCodingAgent();
   const session = await createVercelNetworkSandboxSession({
@@ -103,7 +109,7 @@ export async function stopSandbox(sandboxId: string) {
   try {
     await (await Sandbox.get({ name: sandboxId })).stop();
   } catch (e) {
-    console.warn(`stopping ${sandboxId} failed; its session will time out instead:`, e); // never fail the run over it
+    warn('stopping the sandbox failed; its session will time out instead', { error: String(e) }); // never fail the run over it
   }
 }
 
@@ -111,6 +117,7 @@ export async function stopSandbox(sandboxId: string) {
 export async function destroyIssueSandbox<I>(issue: Named<I, IssueNumber>, _proof: SandboxDeletable<I>) {
   const sbx = await Sandbox.get({ name: issueSandboxName(issue.value) }).catch((e) => (apiStatus(e) === 404 ? undefined : Promise.reject(e)));
   await sbx?.delete({ deleteOrphanSnapshots: true });
+  note({ sandbox: issueSandboxName(issue.value), sandboxDeleted: Boolean(sbx) });
   return Boolean(sbx);
 }
 
@@ -123,7 +130,8 @@ export async function prepareRepo(sandboxId: string, branch: string) {
   if ((await sh(sbx, 'test -d repo/.git', sbx.cwd)).exitCode !== 0) {
     // First run on this issue: clone the factory branch if it exists (Implement), otherwise the default branch (Spec).
     const clone = await sh(sbx, `git clone --depth 50 --branch ${branch} ${url} repo || git clone --depth 50 ${url} repo`, sbx.cwd);
-    if (clone.exitCode !== 0) throw new Error(`clone failed: ${clone.stderr}`);
+    if (clone.exitCode !== 0) throw createError({ message: 'clone failed', why: tail(clone.stderr), fix: 'Check that the GitHub App can read the repo (pnpm check tokens).' });
+    note({ checkout: 'fresh clone' });
     await sh(sbx, [
       'echo ".factory/" >> .git/info/exclude', // the result file is never committed
       // Identity for the Dev agent's own commits (the orchestrator's commits go through the API).
@@ -138,13 +146,18 @@ export async function prepareRepo(sandboxId: string, branch: string) {
       `(git fetch -q --depth 50 origin refs/heads/${branch} || git fetch -q --depth 50 origin HEAD)`,
       'git checkout -q -B tmp-factory-sync FETCH_HEAD',
     ].join(' && '));
-    if (sync.exitCode !== 0) throw new Error(`sync failed: ${sync.stderr}`);
+    if (sync.exitCode !== 0) throw createError({ message: 'sync failed', why: tail(sync.stderr), fix: 'Check that the GitHub App can read the repo (pnpm check tokens).' });
+    note({ checkout: 'synced the reused sandbox with GitHub' });
   }
   await sh(sbx, [`git checkout -q -B ${branch}`, 'git branch -q -D tmp-factory-sync 2>/dev/null || true', 'git tag -f factory-base', 'mkdir -p .factory', 'rm -f .factory/result.json'].join(' && '));
   const baseSha = (await sh(sbx, 'git rev-parse HEAD')).stdout.trim();
 
+  const installStart = Date.now();
   const install = await sh(sbx, 'pnpm install --frozen-lockfile');
-  if (install.exitCode !== 0) throw new Error(`install failed: ${install.stderr.slice(-4000)}`);
+  note({ baseSha, installMs: Date.now() - installStart });
+  if (install.exitCode !== 0) {
+    throw createError({ message: 'install failed', why: tail(install.stderr, 3000), fix: 'Run `pnpm install --frozen-lockfile` on the branch: the lockfile may be out of date or a package unreachable.' });
+  }
 
   // Lock down BEFORE the agent exists: no GitHub, no registries, no internet.
   await sbx.update({ networkPolicy: lockdownPolicy(key) });
@@ -178,6 +191,8 @@ function agentPolicy(sbx: Sandbox, key: string, station: SandboxStation, dev?: D
       await sbx.writeFiles([{ path: `${repoDir(sbx)}/.factory/github.env`, content: Buffer.from(githubEnvFile(branch, dev.pr)) }]);
       Object.assign(allow, githubDevRules(await mintDevToken(), dev.pr, push));
     }
+    // What the agent can reach this slice (hosts only, never the injected credentials).
+    note({ access: { branch, vercel: Boolean(vercel && vercelEnabled()), push: Boolean(push && dev), hosts: Object.keys(allow) } });
     return { allow } as Parameters<Sandbox['update']>[0]['networkPolicy'];
   });
 }
@@ -202,11 +217,15 @@ export async function finishDevBranch(sandboxId: string, station: SandboxStation
     const dirty = (await sh(sbx, 'git diff --cached --quiet')).exitCode !== 0;
     if (dirty) {
       const c = await run(sbx, 'git', ['commit', '-q', '-m', message]);
-      if (c.exitCode !== 0) throw new Error(`commit failed: ${c.stderr}`);
+      if (c.exitCode !== 0) throw createError({ message: 'commit failed', why: tail(c.stderr) });
     }
     const push = await run(sbx, 'git', ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`]);
-    if (push.exitCode !== 0) throw new Error(`push failed: ${push.stderr.slice(-2000)}`);
-    return { headSha: (await sh(sbx, 'git rev-parse HEAD')).stdout.trim(), committedLeftovers: dirty };
+    if (push.exitCode !== 0) {
+      throw createError({ message: 'push failed', why: tail(push.stderr), fix: 'GitHub refuses bot pushes outside factory/** and to .github/workflows (pnpm check dev).' });
+    }
+    const headSha = (await sh(sbx, 'git rev-parse HEAD')).stdout.trim();
+    note({ branch, headSha, committedLeftovers: dirty });
+    return { headSha, committedLeftovers: dirty };
   } finally {
     await sbx.update({ networkPolicy: lockdownPolicy(key) });
   }
@@ -231,21 +250,36 @@ export async function runAgentSlice(args: { sandboxId: string; station: SandboxS
     ? await agent.continueGenerate({ session })
     : await agent.generate({ session, prompt: args.prompt! });
 
+  const tools: Record<string, number> = {};
+  for (const call of result.steps.flatMap((st) => st.toolCalls)) tools[call.toolName] = (tools[call.toolName] ?? 0) + 1;
+  const agentFacts = { model: config.model, steps: result.steps.length, finishReason: result.finishReason, usage: result.totalUsage, tools };
   if (session.hasUnfinishedTurn()) {
+    note({ agent: { ...agentFacts, done: false } }); // the next slice continues the turn
     return { done: false, continuation: await session.suspendTurn() };
   }
   await session.destroy(); // ends the harness runtime; the caller-owned sandbox survives
+  note({ agent: { ...agentFacts, done: true, text: excerpt(result.text, 500) } });
   return { done: true, text: result.text };
 }
 
 export async function runVerify(sandboxId: string, command: string) {
+  const started = Date.now();
   const r = await sh(await native(sandboxId), command);
-  return { ok: r.exitCode === 0, output: (r.stdout + '\n' + r.stderr).slice(-8000) };
+  const output = (r.stdout + '\n' + r.stderr).slice(-8000);
+  note({ verify: { ok: r.exitCode === 0, exitCode: r.exitCode, ms: Date.now() - started, output: r.exitCode === 0 ? undefined : tail(output, 3000) } });
+  return { ok: r.exitCode === 0, output };
 }
 
 export async function readResult(sandboxId: string) {
   const r = await sh(await native(sandboxId), 'cat .factory/result.json');
-  try { return JSON.parse(r.stdout); } catch { return { summary: 'The agent did not write .factory/result.json.' }; }
+  try {
+    const result = JSON.parse(r.stdout);
+    note({ result: { summary: excerpt(result.summary), openQuestions: result.openQuestions?.length ?? 0, deviations: result.deviationsFromSpec?.length ?? 0 } });
+    return result;
+  } catch {
+    warn('the agent did not write a valid .factory/result.json', { stdout: excerpt(r.stdout, 200) });
+    return { summary: 'The agent did not write .factory/result.json.' };
+  }
 }
 
 export type Change = { path: string; mode: string; deleted?: boolean; contentBase64?: string };
@@ -261,9 +295,10 @@ export async function readChanges(sandboxId: string): Promise<Change[]> {
     const [, newMode, , , status] = parts[i].slice(1).split(' '); // ":old new oldsha newsha S"
     const path = parts[i + 1];
     if (status === 'D') { changes.push({ path, mode: '100644', deleted: true }); continue; }
-    if (newMode === '120000') throw new Error(`Symlinks are not supported: ${path}`);
+    if (newMode === '120000') throw createError({ message: 'Symlinks are not supported', why: `the agent created a symlink at ${path}`, fix: 'Ask for a regular file instead.' });
     const { stdout: b64 } = await run(sbx, 'base64', ['-w0', '--', path]); // argv, no shell
     changes.push({ path, mode: newMode, contentBase64: b64.trim() });
   }
+  note({ changes: { count: changes.length, paths: changes.slice(0, 50).map((c) => (c.deleted ? `${c.path} (deleted)` : c.path)) } });
   return changes;
 }
