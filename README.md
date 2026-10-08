@@ -65,13 +65,49 @@ step in `steps.ts` loads its host module with a dynamic `import()`, which the wo
 | `FACTORY_CONNECTOR`     | Optional Vercel Connect connector UID (default `github/factory`)                 |
 | `AI_GATEWAY_API_KEY`    | Optional. Without it the project's Vercel OIDC token authenticates to AI Gateway |
 
-GitHub access comes from a Vercel Connect GitHub connector (`vercel connect create github --name factory`),
-with its GitHub App installed on the target repository only. Tokens are minted at runtime via OIDC.
+GitHub access comes from a Vercel Connect GitHub connector, created from the factory's linked project with
+`vercel connect create github --name <name>` and set as `FACTORY_CONNECTOR=github/<name>`. Its GitHub App is
+installed on the target repository only. Tokens are minted at runtime through the project's OIDC token and narrowed
+to one repo and explicit permissions (`lib/github.ts`).
 
-The target repository needs the labels `ready-to-spec`, `needs-info`, `ready-to-implement`,
-`factory:running` and `factory:blocked`, a webhook to `https://<app>/api/github/webhook`
-(`application/json`, Issues and Pull requests events), a ruleset on the default branch that requires a
-reviewed pull request, and an executable `scripts/verify`.
+## Setting up a target
+
+The factory works on one target repo and its Vercel project, never on itself.
+
+1. **Repo:** public, or on GitHub Pro/Team/Enterprise (rulesets). It needs pnpm with a committed lockfile, an
+   executable `scripts/verify` (lint, type-check, tests), dependencies from the public npm registry only (the sandbox
+   can't reach anything else), and an `AGENTS.md` with its conventions.
+2. **GitHub App:** add the repo to the connector's GitHub App installation (repository access).
+3. **Labels:** `ready-to-spec`, `needs-info`, `ready-to-implement`, `factory:running`, `factory:blocked`.
+4. **Webhook:** `https://<factory>/api/github/webhook`, `application/json`, Issues and Pull requests events, secret
+   `GITHUB_WEBHOOK_SECRET`.
+5. **Rulesets** (admin role may bypass):
+   - default branch: require a pull request with a code-owner review, block force-pushes and deletion;
+   - branches `~ALL` excluding `~DEFAULT_BRANCH` and `refs/heads/factory/**`: restrict creation, update, deletion;
+   - tags `~ALL`: restrict creation, update, deletion.
+   Plus a `CODEOWNERS` naming the human reviewers.
+6. **Vercel project** connected to the repo, so every push builds a preview. Create a project-scoped token for it,
+   and a "Protection Bypass for Automation" secret (the factory injects it on the project's own hosts).
+7. **Factory env vars:** `FACTORY_OWNER`, `FACTORY_REPO`, `FACTORY_VERCEL_PROJECT_ID`, `FACTORY_VERCEL_TOKEN`, then
+   redeploy the factory.
+8. **Check it:** `pnpm check tokens`, `pnpm check sandbox`, then `pnpm check e2e`.
+
+## Checks and debugging
+
+`pnpm check <name>` runs a check from `checks/` against the configured target, with the real `lib/` code and
+real sandboxes (it needs `.env.local` from `vercel env pull`, and `FACTORY_VERCEL_TOKEN` for Vercel access):
+
+| Check | What it proves |
+| --- | --- |
+| `tokens` | GitHub tokens reach only the target and are narrowed: the read token can't write |
+| `sandbox` | Template with fx, brokered clone, lockdown, AI Gateway brokering, no secret in the sandbox, an agent turn, verify |
+| `vercel <branch>` | The vercel-debug allowlist: allowed endpoints, blocked ones, the protected preview, no secret in the sandbox |
+| `dev` | Dev push/PR access on a throwaway branch: pushes, what GitHub and the firewall refuse, cleanup |
+| `deliveries` | Recent webhook deliveries and why the factory started or ignored each one |
+| `e2e` | Opens a test issue and follows it through every station (`--cleanup <issue>` closes it afterwards) |
+
+See [docs/platform-notes.md](docs/platform-notes.md) for platform behavior these checks guard against, and
+[docs/decisions.md](docs/decisions.md) for why the factory works the way it does.
 
 ## Development
 
@@ -80,4 +116,5 @@ pnpm install
 vercel link && vercel env pull   # OIDC token for Connect, Sandbox and AI Gateway
 pnpm dev
 pnpm verify                      # lint + type-check
+pnpm check tokens                # see "Checks and debugging"
 ```

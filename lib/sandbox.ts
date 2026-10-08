@@ -128,6 +128,12 @@ async function agentPolicy(sbx: Sandbox, key: string, dev?: DevAccess) {
   return { allow } as Parameters<Sandbox['update']>[0]['networkPolicy'];
 }
 
+/** Applies the agent's policy to a sandbox, as runAgentSlice does once the harness has started. Used by the checks. */
+export async function applyAgentPolicy(sandboxId: string, dev?: DevAccess) {
+  const sbx = await native(sandboxId);
+  await sbx.update({ networkPolicy: await agentPolicy(sbx, await gatewayKey(), dev) });
+}
+
 /**
  * Dev, at the end: commit what the agent left uncommitted and push the branch, through the same brokered access.
  * Returns the pushed head.

@@ -45,3 +45,8 @@ next-env.d.ts
 .factory/
 /.swc
 /lib/skills.generated.json
+
+# local notes about this deployment (never commit)
+/.local/
+# bundled checks
+/.checks/

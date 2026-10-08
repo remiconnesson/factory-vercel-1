@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "pnpm run stations && tsc --noEmit",
-    "verify": "./scripts/verify"
+    "verify": "./scripts/verify",
+    "check": "pnpm run stations && node scripts/check.mjs"
   },
   "dependencies": {
     "@ai-sdk/harness": "1.0.139",
@@ -32,6 +33,7 @@
     "@types/node": "^24.19.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "typescript": "^5"
