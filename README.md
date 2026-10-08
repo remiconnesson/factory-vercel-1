@@ -111,6 +111,7 @@ real sandboxes (it needs `.env.local` from `vercel env pull`, and `FACTORY_VERCE
 | `vercel <branch>` | The vercel-debug allowlist: allowed endpoints, blocked ones, the protected preview, no secret in the sandbox |
 | `dev` | Dev push/PR access on a throwaway branch: pushes, what GitHub and the firewall refuse, cleanup |
 | `deliveries` | Recent webhook deliveries and why the factory started or ignored each one |
+| `cleanup <factory-url>` | On the deployed factory: a merged PR deletes its issue's sandbox, an unmerged one keeps it (needs `FACTORY_WEBHOOK_SECRET`) |
 | `e2e` | Opens a test issue and follows it through every station (`--cleanup <issue>` closes it afterwards) |
 
 See [docs/platform-notes.md](docs/platform-notes.md) for platform behavior these checks guard against, and
