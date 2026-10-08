@@ -20,5 +20,11 @@ for (const id of ids) {
   const p = d.request?.payload ?? {};
   const what = [d.event, p.action].filter(Boolean).join('.');
   const subject = p.label?.name ?? (p.pull_request ? `PR #${p.pull_request.number}` : p.issue ? `#${p.issue.number}` : '');
-  console.log(`${d.delivered_at}  ${String(d.status_code).padEnd(3)}  ${what.padEnd(30)} ${String(subject).padEnd(20)} by ${(p.sender?.login ?? '-').padEnd(24)} → ${d.response?.payload ?? ''}`);
+  console.log(`${d.delivered_at}  ${String(d.status_code).padEnd(3)}  ${what.padEnd(30)} ${String(subject).padEnd(20)} by ${(p.sender?.login ?? '-').padEnd(24)} → ${answer(d.response?.payload ?? '')}`);
+}
+
+// The factory answers in one line; anything else (an HTML error page) is cut, and `pnpm check logs` has the details.
+function answer(payload: string) {
+  if (payload.startsWith('<')) return `${payload.match(/<title>([^<]*)<\/title>/)?.[1] ?? 'HTML page'} (see the logs)`;
+  return payload.length > 160 ? `${payload.slice(0, 160)}…` : payload;
 }

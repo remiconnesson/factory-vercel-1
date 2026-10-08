@@ -5,8 +5,8 @@ export const service = 'factory';
 
 /**
  * Defense in depth, in every environment: no credential goes into an event on purpose, but errors and captured library
- * output could carry one. The PII builtins (email, phone, card, IP) stay off: they would mangle commit emails and the
- * 20-digit GitHub delivery IDs that correlate events.
+ * output could carry one. The PII builtins (email, phone, card, IP) stay off: the factory handles no such data, and the
+ * card pattern masks any numeric ID that happens to pass its checksum.
  */
 export const redact: RedactConfig = {
   builtins: ['jwt', 'bearer'],

@@ -99,3 +99,11 @@ rules read as rules, are validated against a schema at build time, and name them
 **Cost:** a wasm dependency that must stay out of workflow bundles, a `name(...)` scope at each decision point, and
 facts (like a PR's changed paths) fetched by the proof modules rather than passed in, so the shell can't hand them
 stale ones.
+
+## Wide events with evlog, in the Vercel runtime logs
+
+Debugging a run meant guessing from GitHub comments and stray `console.log` lines. **Decision:** one wide event per
+webhook delivery and per workflow step attempt (evlog), with the workflow run ID as the thread from a delivery to every
+step it caused; `pnpm check logs <issue>` reads them back as a timeline. Events go to stdout, so the Vercel runtime logs
+hold them; no drain yet. **Cost:** the runtime logs' retention limits how far back we can debug, and every step body
+gains one `inStep` line.

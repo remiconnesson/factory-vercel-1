@@ -147,11 +147,37 @@ real sandboxes (it needs `.env.local` from `vercel env pull`, and `FACTORY_VERCE
 | `vercel <branch>` | The vercel-debug allowlist: allowed endpoints, blocked ones, the protected preview, no secret in the sandbox |
 | `dev` | Dev push/PR access on a throwaway branch: pushes, what GitHub and the firewall refuse, cleanup |
 | `deliveries` | Recent webhook deliveries and why the factory started or ignored each one |
+| `logs <issue \| wrun_… \| delivery>` | The factory's logs about an issue, a workflow run or a delivery, as a timeline (see "Logs") |
 | `cleanup <factory-url>` | On the deployed factory: a merged PR deletes its issue's sandbox, an unmerged one keeps it (needs `FACTORY_WEBHOOK_SECRET`) |
 | `e2e` | Opens a test issue and follows it through every station (`--cleanup <issue>` closes it afterwards) |
 
 See [docs/platform-notes.md](docs/platform-notes.md) for platform behavior these checks guard against, and
 [docs/decisions.md](docs/decisions.md) for why the factory works the way it does.
+
+### Logs
+
+The factory logs with [evlog](https://www.evlog.dev): one wide event (one JSON line in the Vercel runtime logs) per
+unit of work, carrying everything needed to understand it without reading other lines.
+
+| Event | Fields |
+| --- | --- |
+| Webhook delivery | `github` (event, action, delivery, sender, issue/PR, label), `trigger`, `decision` (allow, the refusing rule), `outcome` (started, ignored, rejected) and `reason`, `started.workflowRunId` |
+| Workflow step (one per attempt) | `workflow` (name, runId), `step` (name, id, attempt), the `issue`/`pr`/`station`/`sandbox` it works on, `outcome`, `duration`, and what it found and decided |
+
+What steps add, by area: sandbox (`sandboxState` resumed/created/rebuilt, `checkout`, `installMs`, `baseSha`), the
+agent's reach for the slice (`access`: hosts, Vercel, push), agents (`agent`: model, steps, tools used, finish or stop
+reason, token usage, final text), `verify` (exit code, time, output tail on failure), decisions (`decision`: action,
+allow, why, refused paths), GitHub (`prAction`, `prState`, `review`, `comment`, which holds blocked reasons). Failures
+are structured errors with `why` and `fix`. Credentials are redacted (`lib/log-config.ts`).
+
+```sh
+pnpm check logs 17                 # everything about issue 17: deliveries, and every step of the runs they started
+pnpm check logs wrun_41M4EP4V…     # one workflow run
+pnpm check logs 17 --since 3d --json | jq 'select(.level == "error")'
+```
+
+Vercel keeps runtime logs for a limited time (it depends on the plan), so older logs can be gone; an evlog drain
+(Axiom, Datadog, OTLP…) in `lib/log.ts` and `instrumentation.ts` would keep them longer.
 
 ## Development
 

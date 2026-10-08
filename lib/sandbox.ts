@@ -252,7 +252,8 @@ export async function runAgentSlice(args: { sandboxId: string; station: SandboxS
 
   const tools: Record<string, number> = {};
   for (const call of result.steps.flatMap((st) => st.toolCalls)) tools[call.toolName] = (tools[call.toolName] ?? 0) + 1;
-  const agentFacts = { model: config.model, steps: result.steps.length, finishReason: result.finishReason, usage: result.totalUsage, tools };
+  const { inputTokens, outputTokens, totalTokens } = result.totalUsage;
+  const agentFacts = { model: config.model, steps: result.steps.length, finishReason: result.finishReason, usage: { inputTokens, outputTokens, totalTokens }, tools };
   if (session.hasUnfinishedTurn()) {
     note({ agent: { ...agentFacts, done: false } }); // the next slice continues the turn
     return { done: false, continuation: await session.suspendTurn() };

@@ -81,6 +81,22 @@ says what to do about it. `pnpm check <name>` re-verifies the ones marked with a
 - **Use the `nodejs` build and keep it external** (`serverExternalPackages` in `next.config.ts`), so Next.js traces
   the `.wasm` file into the functions that need it instead of bundling it. Never import it from a workflow file.
 
+## evlog
+
+- **`defineNodeInstrumentation` (from `evlog/next/instrumentation`) breaks on Vercel.** It loads its Node half with an
+  import the bundler is told to ignore, so file tracing never ships `evlog` and every request fails loading the
+  instrumentation hook ("Cannot find package 'evlog'"); it works locally because `node_modules` is there. Import
+  `createInstrumentation` from `evlog/next/instrumentation/create` yourself (`instrumentation.ts`). To catch this class
+  of bug before deploying, run `next build && next start` and send a request, or grep `.next/server` for
+  `import("evlog`.
+- **`captureOutput` re-captures evlog's own events** from stdout and nests each one, escaped, in another event's
+  `message`. Leave it off.
+- **The default redaction masks emails and any digit run that passes the card checksum** (`4111111111111111` →
+  `****1111`), which can hit numeric IDs, and adds nothing for GitHub tokens or Basic auth. Pick builtins and add
+  patterns explicitly (`lib/log-config.ts`).
+- **`vercel logs --json` returns one record per invocation**, with one log line per entry in `logs[]`; a workflow
+  invocation can run several steps, so one record can hold several events.
+
 ## GitHub
 
 - **Rulesets and branch protection on private repos need GitHub Pro, Team or Enterprise.** Free accounts and free

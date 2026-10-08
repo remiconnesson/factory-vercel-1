@@ -24,4 +24,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Cedar is wasm: import `core/decide.ts` (and anything that uses it) from host code only, never from workflow files.
 - Station prompts live in `factory/stations/*.md`, skills in `factory/skills/`; `pnpm bundle` regenerates the
   generated JSON for stations, skills and rules (`dev`, `build`, `typecheck` and `test` run it first).
+- Log through `lib/log.ts` (evlog): add facts to the current wide event with `note()` (or `warn()`), never
+  `console.*` (lint enforces it). A new step runs its body in `inStep`. Throw `createError({ message, why, fix })` from
+  evlog for failures someone will debug from the logs. Never put a credential in an event.
 - `./scripts/verify` must pass before a change is done.
